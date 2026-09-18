@@ -1,0 +1,49 @@
+services:
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: taskflow
+      POSTGRES_PASSWORD: taskflow
+      POSTGRES_DB: taskflow
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U taskflow -d taskflow']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - taskflow
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:latest
+    restart: unless-stopped
+    command: server -s3 -s3.config=/etc/seaweedfs/s3.json -dir=/data
+    environment:
+      AWS_ACCESS_KEY_ID: taskflow
+      AWS_SECRET_ACCESS_KEY: taskflow-secret
+    ports:
+      - '8333:8333' # S3 API
+      - '9333:9333' # master UI
+      - '8888:8888' # filer
+    volumes:
+      - seaweedfs_data:/data
+      - ./docker/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -s -o /dev/null http://127.0.0.1:8333/']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - taskflow
+
+networks:
+  taskflow:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  seaweedfs_data:
