@@ -1,0 +1,125 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  PLATFORM_ADMIN
+  ORG_ADMIN
+  ORG_MEMBER
+}
+
+enum OrganisationStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum ProjectStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum IssueStatus {
+  TODO
+  IN_PROGRESS
+  DONE
+}
+
+enum IssuePriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+/// Global catalog of plan tiers — not tenant-scoped, shared across organisations.
+model SubscriptionPlan {
+  id             String   @id @default(uuid()) @db.Uuid
+  name           String   @unique
+  max_users      Int
+  max_projects   Int
+  max_tasks      Int
+  max_storage_mb Int
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
+
+  organisations Organisation[]
+}
+
+/// Tenant workspace. Root of the tenant hierarchy — every content model
+/// traces back to one via organisation_id.
+model Organisation {
+  id         String             @id @default(uuid()) @db.Uuid
+  name       String
+  slug       String             @unique
+  status     OrganisationStatus @default(ACTIVE)
+  plan_id    String             @db.Uuid
+  plan       SubscriptionPlan   @relation(fields: [plan_id], references: [id])
+  created_at DateTime           @default(now())
+  updated_at DateTime           @updatedAt
+
+  users    User[]
+  projects Project[]
+  issues   Issue[]
+}
+
+model User {
+  id              String       @id @default(uuid()) @db.Uuid
+  organisation_id String       @db.Uuid
+  organisation    Organisation @relation(fields: [organisation_id], references: [id], onDelete: Cascade)
+  email           String       @unique
+  password_hash   String
+  first_name      String
+  last_name       String
+  role            Role         @default(ORG_MEMBER)
+  status          UserStatus   @default(ACTIVE)
+  created_at      DateTime     @default(now())
+  updated_at      DateTime     @updatedAt
+
+  @@unique([organisation_id, id])
+  @@index([organisation_id])
+}
+
+model Project {
+  id              String        @id @default(uuid()) @db.Uuid
+  organisation_id String        @db.Uuid
+  organisation    Organisation  @relation(fields: [organisation_id], references: [id], onDelete: Cascade)
+  name            String
+  description     String?
+  status          ProjectStatus @default(ACTIVE)
+  created_at      DateTime      @default(now())
+  updated_at      DateTime      @updatedAt
+
+  issues Issue[]
+
+  @@unique([organisation_id, id])
+  @@index([organisation_id])
+}
+
+model Issue {
+  id              String        @id @default(uuid()) @db.Uuid
+  organisation_id String        @db.Uuid
+  organisation    Organisation  @relation(fields: [organisation_id], references: [id], onDelete: Cascade)
+  project_id      String        @db.Uuid
+  project         Project       @relation(fields: [organisation_id, project_id], references: [organisation_id, id], onDelete: Cascade)
+  title           String
+  description     String?
+  status          IssueStatus   @default(TODO)
+  priority        IssuePriority @default(MEDIUM)
+  created_at      DateTime      @default(now())
+  updated_at      DateTime      @updatedAt
+
+  @@unique([organisation_id, id])
+  @@index([organisation_id, project_id])
+}
