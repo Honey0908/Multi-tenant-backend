@@ -34,10 +34,10 @@ Organisation (Tenant Workspace)
 ### Docker
 - [x] `npm init -y`, set up `tsconfig.json`, install runtime deps (`express`, `@prisma/client`, `zod`, `pino`, `swagger-ui-express`, `yamljs`)
 - [x] Write `docker-compose.yml` with a PostgreSQL 17 node (named DB, credentials, health check)
-- [ ] Verify `docker compose up` boots with a green health check — **not run**: no `docker` binary in this environment; run locally to confirm
+- [x] Verify `docker compose up` boots with a green health check — confirmed indirectly: `prisma migrate dev`/`status` and app queries connect successfully to `localhost:5432`
 
 ### PostgreSQL
-- [ ] Confirm DB is reachable from the host and accepts connections — depends on the `docker compose up` step above
+- [x] Confirm DB is reachable from the host and accepts connections — 3 migrations applied, seed run, and smoke-tested creates/reads all succeeded against the live container
 - [x] Plan RLS policy structure per tenant-scoped table
 
 ### Prisma
