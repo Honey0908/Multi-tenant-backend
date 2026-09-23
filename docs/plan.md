@@ -82,44 +82,36 @@ Verified end-to-end against the live DB (org A cannot see org B's users; a query
 **Authentication → Tenant Context → Projects → Tasks**
 
 ### Authentication
-- [ ] `POST /api/auth/signup` — atomic onboarding (validate with Zod, create Org + Plan + User in one transaction)
-- [ ] `POST /api/auth/login` — issue JWT containing `{ userId, orgId, role }`
-- [ ] Rollback test: inject bad data mid-transaction, assert zero orphaned rows
+- [x] `POST /api/auth/signup` — atomic onboarding (validate with Zod, create Org + Plan + User in one transaction)
+- [x] `POST /api/auth/login` — issue JWT containing `{ userId, orgId, role }`
+- [x] Rollback test: inject bad data mid-transaction, assert zero orphaned rows — `src/__tests__/auth.test.ts`
+
+One design decision made while implementing login: RLS on `User` returns zero rows with no `app.org_id` set, but login only has an email — it doesn't know the org yet. Rather than have the app fall back to the migration superuser role for that lookup (full read/write on every table), added a narrow `auth_reader` Postgres role (`create_auth_reader_role` migration) that can only `SELECT` on `User` and bypasses RLS to do it — used exclusively by `src/lib/authPrisma.ts`. Every other query still goes through `app_user`, fully RLS-scoped.
 
 ### Tenant Context
-- [ ] `src/lib/db.ts` — Prisma Client Extension that wraps every query in a transaction setting `app.org_id`:
-  ```typescript
-  export const getTenantClient = (orgId: string) => {
-    return basePrisma.$extends({
-      query: {
-        $allModels: {
-          async $allOperations({ args, query }) {
-            return basePrisma.$transaction(async (tx) => {
-              await tx.$executeRawUnsafe(`SET LOCAL app.org_id = '${orgId}';`);
-              return query(args);
-            });
-          },
-        },
-      },
-    });
-  };
-  ```
-- [ ] `src/middleware/tenantContext.ts` — unpack JWT, inject `orgId` into `AsyncLocalStorage`
-- [ ] Isolation test: seed Org A and Org B both with `prj-1111`; assert Org B's token returns `404` for Org A's project
+- [x] `src/lib/db.ts` — Prisma Client Extension (`getTenantClient`) that wraps every query in a transaction setting `app.org_id`, plus `tenantDb()` which reads the org id from request-scoped `AsyncLocalStorage`
+- [x] `src/middleware/tenantContext.ts` — unpack JWT (`requireAuth`), inject `{ userId, orgId, role }` into `AsyncLocalStorage`
+- [x] Isolation test: Org A and Org B both create a project with the *same name*; assert Org B's token returns `404` for Org A's project (and can't list/patch/delete it either) — `src/__tests__/tenantIsolation.test.ts`
+
+Bug caught while writing the isolation test: the plan's `getTenantClient` snippet calls `prisma.$transaction(async (tx) => { await tx.$executeRawUnsafe(...); return query(args); })` — but `query(args)` there is a deferred PrismaPromise that runs on the *base* client's own connection, not `tx`'s, so the `SET LOCAL` had no effect and even the owning org couldn't see its own rows. Fixed by using the array/batch form of `$transaction` (`prisma.$transaction([prisma.$executeRawUnsafe(...), query(args)])`), which sends both statements down the same connection in one transaction. Verified via the isolation test and manual curl checks both ways (owner sees it, other org gets 404 on read/patch/delete).
 
 ### Projects
-- [ ] `POST /api/projects` — create project (enforces plan limit)
-- [ ] `GET /api/projects` — list projects for the authenticated org
-- [ ] `GET /api/projects/:id` — fetch single project
-- [ ] `PATCH /api/projects/:id` — update
-- [ ] `DELETE /api/projects/:id` — delete
+- [x] `POST /api/projects` — create project (enforces plan limit: count existing vs `plan.max_projects`, `409` with a `"N of M projects used on the X plan"` message)
+- [x] `GET /api/projects` — list projects for the authenticated org
+- [x] `GET /api/projects/:id` — fetch single project
+- [x] `PATCH /api/projects/:id` — update
+- [x] `DELETE /api/projects/:id` — delete
+
+Note: this count-then-create check is not concurrency-safe (two simultaneous requests at the limit could both pass the count check) — that's intentionally left for Milestone 3's atomic `usage_counters` + concurrency test.
 
 ### Tasks (Issues)
-- [ ] `POST /api/projects/:projectId/issues` — create task
-- [ ] `GET /api/projects/:projectId/issues` — list tasks
-- [ ] `GET /api/projects/:projectId/issues/:id` — fetch task
-- [ ] `PATCH /api/projects/:projectId/issues/:id` — update
-- [ ] `DELETE /api/projects/:projectId/issues/:id` — delete
+- [x] `POST /api/projects/:projectId/issues` — create task
+- [x] `GET /api/projects/:projectId/issues` — list tasks
+- [x] `GET /api/projects/:projectId/issues/:id` — fetch task
+- [x] `PATCH /api/projects/:projectId/issues/:id` — update
+- [x] `DELETE /api/projects/:projectId/issues/:id` — delete
+
+Verified end-to-end via `npm test` (15 tests: signup/login/rollback, tenant isolation for both projects and nested issues, full projects CRUD + plan-limit enforcement, full issues CRUD) and manually via curl against the live dev containers, including cross-tenant read/write/delete attempts on both resources.
 
 ---
 

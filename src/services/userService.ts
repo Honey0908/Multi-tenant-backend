@@ -3,12 +3,8 @@ import { prisma } from '../lib/prisma.js';
 import { withOrgContext } from '../lib/db.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { ConflictError, NotFoundError } from '../lib/errors.js';
+import { omitPasswordHash } from '../lib/serialize.js';
 import type { CreateUserInput } from '../validators/user.js';
-
-function omitPasswordHash<T extends { password_hash: string }>(user: T) {
-  const { password_hash: _password_hash, ...safeUser } = user;
-  return safeUser;
-}
 
 export async function createUser(input: CreateUserInput) {
   const organisation = await prisma.organisation.findUnique({ where: { id: input.organisationId } });
