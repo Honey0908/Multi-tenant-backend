@@ -1,0 +1,501 @@
+openapi: 3.0.3
+info:
+  title: TaskFlow API
+  description: >
+    A multi-tenant SaaS backend where tenant isolation is structural,
+    enforced by PostgreSQL Row-Level Security and composite foreign keys.
+  version: 1.0.0
+servers:
+  - url: /api
+
+tags:
+  - name: Auth
+  - name: Projects
+  - name: Issues
+  - name: Platform Admin
+    description: Requires the PLATFORM_ADMIN role — see docs/plan.md Milestone 3.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /auth/signup:
+    post:
+      tags: [Auth]
+      summary: Atomically create an organisation, its first ORG_ADMIN user, and issue a token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SignupRequest' }
+      responses:
+        '201':
+          description: Organisation and admin user created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '409':
+          description: Organisation slug or user email already taken
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Exchange email/password for a JWT
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        '401':
+          description: Invalid credentials or inactive account
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /users:
+    post:
+      tags: [Auth]
+      summary: Add a member to the caller's own organisation
+      description: >
+        Requires ORG_ADMIN (or PLATFORM_ADMIN). The organisation is always
+        the caller's own, taken from their JWT — it is never accepted as
+        request input. Enforces the plan's seat limit atomically via
+        UsageCounter; returns 409 when the org is already at max_users.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateUserRequest' }
+      responses:
+        '201':
+          description: User created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: Email already registered, or seat limit reached
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /organisations:
+    post:
+      tags: [Platform Admin]
+      summary: Provision a bare organisation (no initial user)
+      responses:
+        '201':
+          description: Organisation created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Organisation' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: Slug already taken
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /organisations/{id}:
+    get:
+      tags: [Platform Admin]
+      summary: Fetch an organisation's metadata by id
+      parameters:
+        - $ref: '#/components/parameters/OrganisationId'
+      responses:
+        '200':
+          description: Organisation metadata
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Organisation' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /organisations/{orgId}/users:
+    get:
+      tags: [Platform Admin]
+      summary: List one organisation's members
+      description: >
+        Served over a read-only DB connection (the `platform_reader` role)
+        with SELECT grants limited to Organisation/SubscriptionPlan/User —
+        it cannot see Project, Issue, or UsageCounter rows even if asked to.
+      parameters:
+        - $ref: '#/components/parameters/OrganisationId'
+      responses:
+        '200':
+          description: Members of the organisation
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/User' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /projects:
+    post:
+      tags: [Projects]
+      summary: Create a project in the caller's organisation
+      description: >
+        Enforces the plan's project limit atomically via UsageCounter — a
+        single conditional UPDATE, not count-then-create, so two concurrent
+        requests at the limit can never both succeed. Returns 409 when the
+        org is already at max_projects.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateProjectRequest' }
+      responses:
+        '201':
+          description: Project created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Project' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: Project limit reached
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    get:
+      tags: [Projects]
+      summary: List the caller's organisation's projects
+      responses:
+        '200':
+          description: Projects
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Project' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /projects/{id}:
+    get:
+      tags: [Projects]
+      summary: Fetch a single project
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200':
+          description: Project
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Project' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Projects]
+      summary: Update a project
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateProjectRequest' }
+      responses:
+        '200':
+          description: Updated project
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Project' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Projects]
+      summary: Delete a project
+      description: Releases its claimed UsageCounter slot atomically in the same transaction as the delete.
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '204': { description: Deleted }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /projects/{projectId}/issues:
+    post:
+      tags: [Issues]
+      summary: Create a task in a project
+      description: Enforces the plan's task limit atomically via UsageCounter, same as project creation.
+      parameters:
+        - $ref: '#/components/parameters/ProjectIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateIssueRequest' }
+      responses:
+        '201':
+          description: Issue created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Issue' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Task limit reached
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    get:
+      tags: [Issues]
+      summary: List a project's tasks
+      parameters:
+        - $ref: '#/components/parameters/ProjectIdPath'
+      responses:
+        '200':
+          description: Issues
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Issue' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /projects/{projectId}/issues/{id}:
+    get:
+      tags: [Issues]
+      summary: Fetch a single task
+      parameters:
+        - $ref: '#/components/parameters/ProjectIdPath'
+        - $ref: '#/components/parameters/IssueId'
+      responses:
+        '200':
+          description: Issue
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Issue' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Issues]
+      summary: Update a task
+      parameters:
+        - $ref: '#/components/parameters/ProjectIdPath'
+        - $ref: '#/components/parameters/IssueId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateIssueRequest' }
+      responses:
+        '200':
+          description: Updated issue
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Issue' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Issues]
+      summary: Delete a task
+      description: Releases its claimed UsageCounter slot atomically in the same transaction as the delete.
+      parameters:
+        - $ref: '#/components/parameters/ProjectIdPath'
+        - $ref: '#/components/parameters/IssueId'
+      responses:
+        '204': { description: Deleted }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Obtained from POST /api/auth/signup or POST /api/auth/login. Payload is { userId, orgId, role }.
+
+  parameters:
+    OrganisationId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ProjectId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ProjectIdPath:
+      name: projectId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    IssueId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  responses:
+    ValidationError:
+      description: Request body failed schema validation
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              code: { type: string, example: VALIDATION_ERROR }
+              fields: { type: object, additionalProperties: true }
+    Unauthorized:
+      description: Missing, invalid, or expired bearer token
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Authenticated, but the caller's role cannot perform this action
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: >
+        Not found — either the resource genuinely doesn't exist, or it
+        belongs to a different organisation than the caller's (Row-Level
+        Security filters those rows out before the app ever sees them, so
+        both cases are indistinguishable from outside, by design).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        code: { type: string, example: CONFLICT }
+        message: { type: string }
+
+    SignupRequest:
+      type: object
+      required: [organisationName, organisationSlug, email, password, firstName, lastName]
+      properties:
+        organisationName: { type: string, minLength: 2, maxLength: 120 }
+        organisationSlug: { type: string, pattern: '^[a-z0-9]+(-[a-z0-9]+)*$' }
+        email: { type: string, format: email }
+        password: { type: string, minLength: 8, maxLength: 128 }
+        firstName: { type: string, minLength: 1, maxLength: 80 }
+        lastName: { type: string, minLength: 1, maxLength: 80 }
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+
+    AuthResponse:
+      type: object
+      properties:
+        token: { type: string }
+        organisation: { $ref: '#/components/schemas/Organisation' }
+        user: { $ref: '#/components/schemas/User' }
+
+    CreateUserRequest:
+      type: object
+      required: [email, password, firstName, lastName]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 8, maxLength: 128 }
+        firstName: { type: string }
+        lastName: { type: string }
+        role: { type: string, enum: [ORG_ADMIN, ORG_MEMBER], default: ORG_MEMBER }
+
+    Organisation:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        slug: { type: string }
+        status: { type: string, enum: [ACTIVE, SUSPENDED] }
+        plan_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    User:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        organisation_id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        first_name: { type: string }
+        last_name: { type: string }
+        role: { type: string, enum: [PLATFORM_ADMIN, ORG_ADMIN, ORG_MEMBER] }
+        status: { type: string, enum: [ACTIVE, INACTIVE] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    CreateProjectRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 160 }
+        description: { type: string, maxLength: 2000 }
+
+    UpdateProjectRequest:
+      type: object
+      properties:
+        name: { type: string, minLength: 1, maxLength: 160 }
+        description: { type: string, maxLength: 2000, nullable: true }
+        status: { type: string, enum: [ACTIVE, ARCHIVED] }
+
+    Project:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        organisation_id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        status: { type: string, enum: [ACTIVE, ARCHIVED] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    CreateIssueRequest:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 200 }
+        description: { type: string, maxLength: 4000 }
+        status: { type: string, enum: [TODO, IN_PROGRESS, DONE], default: TODO }
+        priority: { type: string, enum: [LOW, MEDIUM, HIGH], default: MEDIUM }
+
+    UpdateIssueRequest:
+      type: object
+      properties:
+        title: { type: string, minLength: 1, maxLength: 200 }
+        description: { type: string, maxLength: 4000, nullable: true }
+        status: { type: string, enum: [TODO, IN_PROGRESS, DONE] }
+        priority: { type: string, enum: [LOW, MEDIUM, HIGH] }
+
+    Issue:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        organisation_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        title: { type: string }
+        description: { type: string, nullable: true }
+        status: { type: string, enum: [TODO, IN_PROGRESS, DONE] }
+        priority: { type: string, enum: [LOW, MEDIUM, HIGH] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }

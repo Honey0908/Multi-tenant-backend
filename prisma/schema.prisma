@@ -43,6 +43,12 @@ enum IssuePriority {
   HIGH
 }
 
+enum ResourceType {
+  PROJECTS
+  TASKS
+  USERS
+}
+
 /// Global catalog of plan tiers — not tenant-scoped, shared across organisations.
 model SubscriptionPlan {
   id             String   @id @default(uuid()) @db.Uuid
@@ -69,9 +75,10 @@ model Organisation {
   created_at DateTime           @default(now())
   updated_at DateTime           @updatedAt
 
-  users    User[]
-  projects Project[]
-  issues   Issue[]
+  users          User[]
+  projects       Project[]
+  issues         Issue[]
+  usage_counters UsageCounter[]
 }
 
 model User {
@@ -122,4 +129,23 @@ model Issue {
 
   @@unique([organisation_id, id])
   @@index([organisation_id, project_id])
+}
+
+/// Per-tenant, per-resource quota tracker. Enforces plan limits atomically at
+/// the DB layer: a single conditional UPDATE (see src/lib/usageCounters.ts)
+/// increments `value` only if the result would stay within `max_limit`, so
+/// concurrent requests racing for the last slot are serialized by Postgres's
+/// row lock on that single row — exactly one wins, no count-then-create gap.
+model UsageCounter {
+  id              String       @id @default(uuid()) @db.Uuid
+  organisation_id String       @db.Uuid
+  organisation    Organisation @relation(fields: [organisation_id], references: [id], onDelete: Cascade)
+  resource_type   ResourceType
+  value           Int          @default(0)
+  max_limit       Int
+  created_at      DateTime     @default(now())
+  updated_at      DateTime     @updatedAt
+
+  @@unique([organisation_id, resource_type])
+  @@index([organisation_id])
 }

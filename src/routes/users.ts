@@ -1,10 +1,13 @@
 import { Router, type Request } from 'express';
 import { z } from 'zod';
+import { requireAuth } from '../middleware/tenantContext.js';
+import { requireRole } from '../middleware/requireRole.js';
 import { createUserSchema } from '../validators/user.js';
 import { createUser, listOrganisationUsers } from '../services/userService.js';
 import { logger } from '../lib/logger.js';
 
 export const usersRouter = Router();
+usersRouter.use(requireAuth, requireRole('ORG_ADMIN', 'PLATFORM_ADMIN'));
 
 usersRouter.post('/', async (req, res, next) => {
   try {
@@ -17,7 +20,9 @@ usersRouter.post('/', async (req, res, next) => {
   }
 });
 
+// Platform-admin only: reads across the whole platform, not scoped to the caller's own org.
 export const organisationUsersRouter = Router({ mergeParams: true });
+organisationUsersRouter.use(requireAuth, requireRole('PLATFORM_ADMIN'));
 
 organisationUsersRouter.get('/', async (req: Request<{ orgId: string }>, res, next) => {
   try {

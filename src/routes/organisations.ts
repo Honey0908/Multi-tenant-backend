@@ -1,11 +1,16 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { requireAuth } from '../middleware/tenantContext.js';
+import { requireRole } from '../middleware/requireRole.js';
 import { createOrganisationSchema } from '../validators/organisation.js';
 import { createOrganisation, getOrganisationById } from '../services/organisationService.js';
 import { NotFoundError } from '../lib/errors.js';
 import { logger } from '../lib/logger.js';
 
+// Platform-admin only: direct org provisioning and cross-tenant org lookup,
+// as opposed to the self-service /api/auth/signup flow every tenant uses.
 export const organisationsRouter = Router();
+organisationsRouter.use(requireAuth, requireRole('PLATFORM_ADMIN'));
 
 organisationsRouter.post('/', async (req, res, next) => {
   try {

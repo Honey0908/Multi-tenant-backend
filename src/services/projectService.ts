@@ -1,7 +1,9 @@
 import { withOrgContext, tenantDb } from '../lib/db.js';
 import { getTenantContext } from '../lib/requestContext.js';
+import { claimUsage, releaseUsage } from '../lib/usageCounters.js';
+import { ResourceType } from '../generated/prisma/enums.js';
 import { Prisma } from '../generated/prisma/client.js';
-import { ConflictError, NotFoundError } from '../lib/errors.js';
+import { NotFoundError } from '../lib/errors.js';
 import type { CreateProjectInput, UpdateProjectInput } from '../validators/project.js';
 
 export async function createProject(input: CreateProjectInput) {
@@ -13,12 +15,11 @@ export async function createProject(input: CreateProjectInput) {
       include: { plan: true },
     });
 
-    const projectCount = await tx.project.count({ where: { organisation_id: orgId } });
-    if (projectCount >= organisation.plan.max_projects) {
-      throw new ConflictError(
-        `Project limit reached: ${projectCount} of ${organisation.plan.max_projects} projects used on the ${organisation.plan.name} plan`,
-      );
-    }
+    // Atomic claim-then-create, not count-then-create: claimUsage is a
+    // single conditional UPDATE on the org's UsageCounter row, so Postgres's
+    // row lock serializes two concurrent requests racing for the last slot
+    // instead of letting both pass a stale count check.
+    await claimUsage(tx, orgId, ResourceType.PROJECTS, organisation.plan.name);
 
     return tx.project.create({
       data: {
@@ -54,12 +55,13 @@ export async function updateProject(id: string, input: UpdateProjectInput) {
 }
 
 export async function deleteProject(id: string) {
-  try {
-    await tenantDb().project.delete({ where: { id } });
-  } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+  const { orgId } = getTenantContext();
+
+  await withOrgContext(orgId, async (tx) => {
+    const { count } = await tx.project.deleteMany({ where: { id, organisation_id: orgId } });
+    if (count === 0) {
       throw new NotFoundError(`Project ${id} not found`);
     }
-    throw error;
-  }
+    await releaseUsage(tx, orgId, ResourceType.PROJECTS);
+  });
 }

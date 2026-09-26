@@ -120,31 +120,24 @@ Verified end-to-end via `npm test` (15 tests: signup/login/rollback, tenant isol
 **Plan limits → Concurrency → Security tests**
 
 ### Plan Limits
-- [ ] Create `usage_counters` table (`org_id`, `resource_type`, `value`, `max_limit`)
-- [ ] Atomic counter increment at the DB layer:
-  ```sql
-  UPDATE usage_counters
-  SET value = value + 1
-  WHERE org_id = $1 AND resource_type = 'projects' AND value + 1 <= max_limit
-  RETURNING *;
-  ```
-- [ ] Return `409 Conflict` with structured message (e.g., `"Seat limit reached: 3 of 3 seats used on the Free plan"`) when 0 rows updated
+- [x] Create `usage_counters` table (`organisation_id`, `resource_type`, `value`, `max_limit`) — `UsageCounter` model, one row per org per `ResourceType` (`PROJECTS`/`TASKS`/`USERS`), RLS-protected like the other tenant tables (`add_usage_counters` migration)
+- [x] Atomic counter increment at the DB layer — `claimUsage()` in `src/lib/usageCounters.ts` runs the exact conditional `UPDATE ... WHERE value + 1 <= max_limit RETURNING ...` from this plan, inside the caller's transaction
+- [x] Return `409 Conflict` with structured message (e.g., `"Seats limit reached: 5 of 5 seats used on the Starter plan"`) when 0 rows updated
+
+Replaced the Milestone 2 count-then-create checks in `projectService.createProject` and added matching enforcement to `issueService.createIssue` (tasks) and the new authenticated `userService.createUser` (seats) — all three resource types from `SubscriptionPlan` are now actually enforced, not just modeled. Added `releaseUsage()` as the symmetric decrement, called from `deleteProject`/`deleteIssue` in the same transaction as the delete, so a freed slot is immediately available again.
 
 ### Concurrency
-- [ ] Concurrency test: place a tenant at limit − 1, fire two simultaneous creation requests
-- [ ] Assert exactly one `201 Created` and one `409 Conflict`
+- [x] Concurrency test: place a tenant at limit − 1, fire two simultaneous creation requests — `src/__tests__/concurrency.test.ts`
+- [x] Assert exactly one `201 Created` and one `409 Conflict` (also covers a 10-way race at the limit, asserting exactly 1 winner)
 
 ### Security Tests
-- [ ] Cross-tenant isolation test suite (Vitest + Testcontainers)
-- [ ] Platform admin route: separate DB connection with `platform_reader` role, restricted to org-level metadata only
-- [ ] Leak audit script:
-  ```sql
-  SELECT i.id FROM "Issue" i
-  JOIN "Project" p ON i.project_id = p.id
-  WHERE i.organisation_id != p.organisation_id;
-  ```
-- [ ] Structured logging (pino): onboarding events, quota failures, cross-tenant rejections
-- [ ] Swagger UI at `GET /docs` wired up with OpenAPI 3.0 YAML
+- [x] Cross-tenant isolation test suite — expanded in `src/__tests__/planLimits.test.ts` (a client-supplied `organisationId` in the user-creation body is ignored; the org always comes from the JWT) and `src/__tests__/platformAdmin.test.ts`. Still runs against the live dev Postgres container, not Testcontainers, consistent with Milestone 1/2's tests — `testcontainers` was never actually added as a dependency despite being named in the stack.
+- [x] Platform admin route: separate DB connection with `platform_reader` role, restricted to org-level metadata only — `create_platform_reader_role` migration (`SELECT` on `Organisation`/`SubscriptionPlan`/`User` only, no grants on `Project`/`Issue`/`UsageCounter`), used via `src/lib/platformPrisma.ts` and `withPlatformOrgContext`
+- [x] Leak audit script — `scripts/leakAudit.ts` (`npm run audit:leak`), plus a standing regression test (`src/__tests__/leakAudit.test.ts`)
+- [x] Structured logging (pino): onboarding events, quota failures, cross-tenant rejections — `pino-http` request logging (`src/middleware/requestLogger.ts`) plus centralized logging of every `AppError` in `errorHandler.ts` (401/403/404/409 all logged at `warn` with org/user/role context; secrets redacted via `pino`'s `redact` option)
+- [x] Swagger UI at `GET /docs` wired up with OpenAPI 3.0 YAML — `docs/openapi.yaml`, mounted in `src/app.ts`
+
+A real, pre-existing security gap was found and fixed while wiring up the platform-admin route: `POST /api/users` (add a user to an org) and `GET /api/organisations/:orgId/users` (list an org's members) had **no authentication at all** since Milestone 1 — anyone could create an `ORG_ADMIN` account in any organisation by guessing/enumerating its id, or list another org's user directory. Fixed by requiring auth on both: `POST /api/users` now derives the organisation from the caller's own JWT (never from the request body) and requires `ORG_ADMIN`/`PLATFORM_ADMIN`; the org-listing routes now require `PLATFORM_ADMIN` and run over the read-only `platform_reader` connection.
 
 ---
 

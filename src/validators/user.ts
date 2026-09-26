@@ -1,7 +1,10 @@
 import { z } from 'zod';
 
+// No organisationId field: the caller's own org comes from their JWT (see
+// requireAuth / getTenantContext), never from the request body — accepting
+// it as input would let any authenticated user add accounts, including
+// ORG_ADMIN ones, into an organisation they don't belong to.
 export const createUserSchema = z.object({
-  organisationId: z.string().uuid(),
   email: z.string().trim().toLowerCase().email(),
   password: z.string().min(8).max(128),
   firstName: z.string().trim().min(1).max(80),

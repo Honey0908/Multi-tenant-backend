@@ -6,6 +6,7 @@ import { signAccessToken } from '../lib/jwt.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { ConflictError, UnauthorizedError } from '../lib/errors.js';
 import { omitPasswordHash } from '../lib/serialize.js';
+import { initUsageCounters } from '../lib/usageCounters.js';
 import type { SignupInput } from '../validators/auth.js';
 import type { LoginInput } from '../validators/auth.js';
 
@@ -55,6 +56,9 @@ export async function signup(input: SignupInput) {
       }
       throw error;
     }
+
+    // The first ORG_ADMIN created here already occupies one seat.
+    await initUsageCounters(tx, orgId, defaultPlan, 1);
 
     const token = signAccessToken({ userId: user.id, orgId, role: user.role });
 

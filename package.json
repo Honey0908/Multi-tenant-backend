@@ -10,7 +10,9 @@
     "build": "tsc -p tsconfig.json",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
-    "test": "vitest run"
+    "test": "vitest run",
+    "db:seed": "tsx prisma/seed.ts",
+    "audit:leak": "tsx scripts/leakAudit.ts"
   },
   "keywords": [],
   "author": "",
@@ -24,6 +26,7 @@
     "jsonwebtoken": "^9.0.3",
     "pg": "^8.23.0",
     "pino": "^10.3.1",
+    "pino-http": "^11.0.0",
     "swagger-ui-express": "^5.0.1",
     "yamljs": "^0.3.0",
     "zod": "^4.6.5"

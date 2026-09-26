@@ -1,5 +1,6 @@
-import type { Prisma } from '../generated/prisma/client.js';
+import type { Prisma, PrismaClient } from '../generated/prisma/client.js';
 import { prisma } from './prisma.js';
+import { platformPrisma } from './platformPrisma.js';
 import { getTenantContext } from './requestContext.js';
 
 const UUID_RE =
@@ -11,23 +12,46 @@ function assertValidOrgId(orgId: string): void {
   }
 }
 
-/**
- * Runs `fn` inside a transaction with `app.org_id` set for the session, so
- * RLS policies on tenant-scoped tables (User, Project, Issue) admit rows
- * belonging to `orgId`. Use this when a route needs several statements
- * (e.g. a count-then-create limit check) to run atomically — `getTenantClient`
- * below wraps each call in its own transaction, so it can't give that.
- */
-export async function withOrgContext<T>(
+async function runWithOrgContext<T>(
+  client: PrismaClient,
   orgId: string,
   fn: (tx: Prisma.TransactionClient) => Promise<T>,
 ): Promise<T> {
   assertValidOrgId(orgId);
 
-  return prisma.$transaction(async (tx) => {
+  return client.$transaction(async (tx) => {
     await tx.$executeRawUnsafe(`SET LOCAL app.org_id = '${orgId}';`);
     return fn(tx);
   });
+}
+
+/**
+ * Runs `fn` inside a transaction with `app.org_id` set for the session, so
+ * RLS policies on tenant-scoped tables (User, Project, Issue, UsageCounter)
+ * admit rows belonging to `orgId`. Use this when a route needs several
+ * statements (e.g. an atomic limit-check-and-create) to run atomically —
+ * `getTenantClient` below wraps each call in its own transaction, so it
+ * can't give that. Runs over the `app_user` connection.
+ */
+export function withOrgContext<T>(
+  orgId: string,
+  fn: (tx: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+  return runWithOrgContext(prisma, orgId, fn);
+}
+
+/**
+ * Same as `withOrgContext`, but over the read-only `platform_reader`
+ * connection (see create_platform_reader_role migration) — used exclusively
+ * by platform-admin routes that need RLS-scoped access to one organisation's
+ * metadata (e.g. its user directory) without the full CRUD grants `app_user`
+ * has on tenant content tables.
+ */
+export function withPlatformOrgContext<T>(
+  orgId: string,
+  fn: (tx: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+  return runWithOrgContext(platformPrisma, orgId, fn);
 }
 
 /**
