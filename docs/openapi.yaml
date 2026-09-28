@@ -12,6 +12,13 @@ tags:
   - name: Auth
   - name: Projects
   - name: Issues
+  - name: Attachments
+    description: >
+      Direct-to-storage file uploads to SeaweedFS (S3-compatible). The app
+      never proxies file bytes: reserve claims storage quota and returns a
+      presigned URL the client PUTs to directly, and commit verifies
+      server-side (HeadObject) that the bytes actually landed before
+      finalizing. See docs/plan.md Milestone 4.
   - name: Platform Admin
     description: Requires the PLATFORM_ADMIN role — see docs/plan.md Milestone 3.
 
@@ -319,6 +326,125 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /projects/{projectId}/issues/{issueId}/attachments/reserve:
+    post:
+      tags: [Attachments]
+      summary: Reserve storage quota for a file upload and get a presigned upload URL
+      description: >
+        Atomically claims `sizeBytes` of the org's plan storage quota
+        (UsageCounter, resource_type=STORAGE_BYTES) and returns a presigned
+        SeaweedFS PUT URL. The reservation expires after
+        ATTACHMENT_RESERVATION_TTL_MINUTES if never committed, and its quota
+        claim is released on the next reserve call for the org.
+      parameters:
+        - $ref: '#/components/parameters/ProjectIdPath'
+        - $ref: '#/components/parameters/IssueIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReserveAttachmentRequest' }
+      responses:
+        '201':
+          description: Reservation created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReserveAttachmentResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Storage quota limit reached
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '413':
+          description: sizeBytes exceeds the hard per-file cap (ATTACHMENT_MAX_FILE_SIZE_MB)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    get:
+      tags: [Attachments]
+      summary: List an issue's successfully uploaded attachments
+      description: Only COMMITTED attachments are listed — reservations still awaiting upload or expired are not.
+      parameters:
+        - $ref: '#/components/parameters/ProjectIdPath'
+        - $ref: '#/components/parameters/IssueIdPath'
+      responses:
+        '200':
+          description: Attachments
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Attachment' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /projects/{projectId}/issues/{issueId}/attachments/{id}/commit:
+    post:
+      tags: [Attachments]
+      summary: Finalize an attachment after the client has uploaded it to the presigned URL
+      description: >
+        Runs a server-side HeadObject against the reserved storage key — the
+        client can never just claim a size without having uploaded the
+        bytes. If the actual size differs from what was reserved, the
+        storage-quota claim is reconciled to match (and the commit is
+        rejected, deleting the orphaned object, if the real size would push
+        the org over its plan limit).
+      parameters:
+        - $ref: '#/components/parameters/ProjectIdPath'
+        - $ref: '#/components/parameters/IssueIdPath'
+        - $ref: '#/components/parameters/AttachmentId'
+      responses:
+        '200':
+          description: Committed attachment
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Attachment' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: >
+            Not awaiting upload, reservation expired, nothing uploaded yet
+            to the reserved location, or the real upload size exceeds the
+            org's remaining storage quota
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /projects/{projectId}/issues/{issueId}/attachments/{id}:
+    get:
+      tags: [Attachments]
+      summary: Fetch a single committed attachment's metadata
+      parameters:
+        - $ref: '#/components/parameters/ProjectIdPath'
+        - $ref: '#/components/parameters/IssueIdPath'
+        - $ref: '#/components/parameters/AttachmentId'
+      responses:
+        '200':
+          description: Attachment
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Attachment' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Attachments]
+      summary: Delete an attachment
+      description: >
+        Releases its claimed storage-quota bytes (unless it had already
+        expired and been released by the sweep) and deletes the underlying
+        object from SeaweedFS.
+      parameters:
+        - $ref: '#/components/parameters/ProjectIdPath'
+        - $ref: '#/components/parameters/IssueIdPath'
+        - $ref: '#/components/parameters/AttachmentId'
+      responses:
+        '204': { description: Deleted }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -344,6 +470,16 @@ components:
       required: true
       schema: { type: string, format: uuid }
     IssueId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    IssueIdPath:
+      name: issueId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    AttachmentId:
       name: id
       in: path
       required: true
@@ -497,5 +633,46 @@ components:
         description: { type: string, nullable: true }
         status: { type: string, enum: [TODO, IN_PROGRESS, DONE] }
         priority: { type: string, enum: [LOW, MEDIUM, HIGH] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ReserveAttachmentRequest:
+      type: object
+      required: [fileName, contentType, sizeBytes]
+      properties:
+        fileName:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: Must not contain path separators.
+        contentType:
+          type: string
+          description: Must be one of an allow-listed set of MIME types (images, PDF, text/CSV/JSON, zip, Office documents).
+        sizeBytes:
+          type: integer
+          minimum: 1
+          description: Declared upload size in bytes — reconciled against the real size at commit time.
+
+    ReserveAttachmentResponse:
+      type: object
+      properties:
+        attachment: { $ref: '#/components/schemas/Attachment' }
+        uploadUrl:
+          type: string
+          description: Presigned SeaweedFS PUT URL. PUT the file's raw bytes here with a matching Content-Type header.
+
+    Attachment:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        organisation_id: { type: string, format: uuid }
+        issue_id: { type: string, format: uuid }
+        uploaded_by: { type: string, format: uuid }
+        file_name: { type: string }
+        content_type: { type: string }
+        size_bytes: { type: integer, description: Reserved size until committed, then the server-verified real size. }
+        storage_key: { type: string }
+        status: { type: string, enum: [RESERVED, COMMITTED, EXPIRED] }
+        expires_at: { type: string, format: date-time, nullable: true }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }

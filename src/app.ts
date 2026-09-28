@@ -10,6 +10,7 @@ import { organisationsRouter } from './routes/organisations.js';
 import { usersRouter, organisationUsersRouter } from './routes/users.js';
 import { projectsRouter } from './routes/projects.js';
 import { issuesRouter } from './routes/issues.js';
+import { attachmentsRouter } from './routes/attachments.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { requestLogger } from './middleware/requestLogger.js';
 
@@ -31,6 +32,7 @@ app.use('/api/auth', authRouter);
 app.use('/api/organisations/:orgId/users', organisationUsersRouter);
 app.use('/api/organisations', organisationsRouter);
 app.use('/api/users', usersRouter);
+app.use('/api/projects/:projectId/issues/:issueId/attachments', attachmentsRouter);
 app.use('/api/projects/:projectId/issues', issuesRouter);
 app.use('/api/projects', projectsRouter);
 

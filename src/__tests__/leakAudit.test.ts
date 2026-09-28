@@ -32,4 +32,31 @@ describe('cross-tenant leak audit', () => {
       await client.end();
     }
   });
+
+  it("finds zero attachments whose organisation_id disagrees with their issue's", async () => {
+    const org = await signupOrg('leak-audit-attachment');
+    const auth = { Authorization: `Bearer ${org.token}` };
+    const project = await request(app).post('/api/projects').set(auth).send({ name: 'Leak Audit Project' });
+    const issue = await request(app)
+      .post(`/api/projects/${project.body.id}/issues`)
+      .set(auth)
+      .send({ title: 'Leak Audit Issue' });
+    await request(app)
+      .post(`/api/projects/${project.body.id}/issues/${issue.body.id}/attachments/reserve`)
+      .set(auth)
+      .send({ fileName: 'leak.txt', contentType: 'text/plain', sizeBytes: 10 });
+
+    const client = new Client({ connectionString: process.env.DATABASE_URL });
+    await client.connect();
+    try {
+      const { rows } = await client.query(`
+        SELECT a.id FROM "Attachment" a
+        JOIN "Issue" i ON a.issue_id = i.id
+        WHERE a.organisation_id != i.organisation_id;
+      `);
+      expect(rows).toHaveLength(0);
+    } finally {
+      await client.end();
+    }
+  });
 });

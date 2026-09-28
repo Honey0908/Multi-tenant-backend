@@ -47,6 +47,13 @@ enum ResourceType {
   PROJECTS
   TASKS
   USERS
+  STORAGE_BYTES
+}
+
+enum AttachmentStatus {
+  RESERVED
+  COMMITTED
+  EXPIRED
 }
 
 /// Global catalog of plan tiers — not tenant-scoped, shared across organisations.
@@ -79,6 +86,7 @@ model Organisation {
   projects       Project[]
   issues         Issue[]
   usage_counters UsageCounter[]
+  attachments    Attachment[]
 }
 
 model User {
@@ -127,6 +135,8 @@ model Issue {
   created_at      DateTime      @default(now())
   updated_at      DateTime      @updatedAt
 
+  attachments Attachment[]
+
   @@unique([organisation_id, id])
   @@index([organisation_id, project_id])
 }
@@ -136,16 +146,49 @@ model Issue {
 /// increments `value` only if the result would stay within `max_limit`, so
 /// concurrent requests racing for the last slot are serialized by Postgres's
 /// row lock on that single row — exactly one wins, no count-then-create gap.
+/// value/max_limit are BigInt (not Int) because STORAGE_BYTES counts raw
+/// bytes: a Professional-tier plan's 10GB limit (10,737,418,240 bytes)
+/// already overflows Postgres's int4/Prisma's Int (max ~2.147B).
 model UsageCounter {
   id              String       @id @default(uuid()) @db.Uuid
   organisation_id String       @db.Uuid
   organisation    Organisation @relation(fields: [organisation_id], references: [id], onDelete: Cascade)
   resource_type   ResourceType
-  value           Int          @default(0)
-  max_limit       Int
+  value           BigInt       @default(0)
+  max_limit       BigInt
   created_at      DateTime     @default(now())
   updated_at      DateTime     @updatedAt
 
   @@unique([organisation_id, resource_type])
   @@index([organisation_id])
+}
+
+/// Metadata row for a file uploaded to SeaweedFS's S3-compatible object
+/// store. The upload itself is a direct-to-storage flow (client PUTs bytes
+/// straight to a presigned URL — the app never proxies file bytes):
+/// RESERVED is created by /attachments/reserve (claims storage quota and
+/// hands back a presigned PUT URL), then /attachments/:id/commit verifies
+/// the object actually landed (server-side HeadObject) and flips it to
+/// COMMITTED. A RESERVED row whose reservation TTL (expires_at) lapses
+/// without a commit is swept to EXPIRED and its claimed bytes released —
+/// see src/services/attachmentService.ts.
+model Attachment {
+  id              String           @id @default(uuid()) @db.Uuid
+  organisation_id String           @db.Uuid
+  organisation    Organisation     @relation(fields: [organisation_id], references: [id], onDelete: Cascade)
+  issue_id        String           @db.Uuid
+  issue           Issue            @relation(fields: [organisation_id, issue_id], references: [organisation_id, id], onDelete: Cascade)
+  uploaded_by     String           @db.Uuid
+  file_name       String
+  content_type    String
+  size_bytes      BigInt
+  storage_key     String           @unique
+  status          AttachmentStatus @default(RESERVED)
+  expires_at      DateTime?
+  created_at      DateTime         @default(now())
+  updated_at      DateTime         @updatedAt
+
+  @@unique([organisation_id, id])
+  @@index([organisation_id, issue_id])
+  @@index([status, expires_at])
 }

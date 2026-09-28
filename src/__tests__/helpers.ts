@@ -60,4 +60,30 @@ export async function promoteToPlatformAdmin(org: SignedUpOrg): Promise<string> 
   return res.body.token;
 }
 
+/**
+ * Directly overrides an org's STORAGE_BYTES UsageCounter limit — there is no
+ * API path to do this (plan limits come from the assigned SubscriptionPlan),
+ * and the Starter plan's real 1GB limit is too large to exercise in a test
+ * without uploading huge files. Mirrors promoteToPlatformAdmin's approach of
+ * reaching into the DB directly for test setup that the API doesn't expose.
+ */
+export async function setStorageLimit(organisationId: string, maxBytes: number): Promise<void> {
+  await withOrgContext(organisationId, (tx) =>
+    tx.usageCounter.update({
+      where: { organisation_id_resource_type: { organisation_id: organisationId, resource_type: 'STORAGE_BYTES' } },
+      data: { max_limit: BigInt(maxBytes) },
+    }),
+  );
+}
+
+/** Forces a RESERVED attachment's reservation to already be expired, for testing the expiry sweep. */
+export async function expireReservation(organisationId: string, attachmentId: string): Promise<void> {
+  await withOrgContext(organisationId, (tx) =>
+    tx.attachment.update({
+      where: { id: attachmentId },
+      data: { expires_at: new Date(Date.now() - 60_000) },
+    }),
+  );
+}
+
 export { app };

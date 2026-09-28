@@ -146,16 +146,34 @@ A real, pre-existing security gap was found and fixed while wiring up the platfo
 **SeaweedFS → Attachments → Storage limits**
 
 ### SeaweedFS
-- [ ] Add SeaweedFS container to `docker-compose.yml` in single-server S3 emulation mode
-- [ ] Verify S3-compatible endpoint is reachable
+- [x] Add SeaweedFS container to `docker-compose.yml` in single-server S3 emulation mode
+- [x] Verify S3-compatible endpoint is reachable — `ensureBucketExists()` (`src/lib/s3.ts`) runs at app startup (`src/index.ts`), idempotently creating the `taskflow-attachments` bucket; confirmed against the live container via a direct presigned PUT + HeadObject round-trip
 
 ### Attachments
-- [ ] `POST /api/attachments/reserve` — validate size against storage limit, generate presigned SeaweedFS upload URL, reserve bytes in `usage_counters`
-- [ ] `POST /api/attachments/commit` — after client uploads directly to SeaweedFS, run server-side `HeadObject` to verify actual size, then lock the `Attachment` row
+- [x] `POST /api/projects/:projectId/issues/:issueId/attachments/reserve` — validates size against storage limit, generates a presigned SeaweedFS upload URL, reserves bytes in `usage_counters` (`src/services/attachmentService.ts`)
+- [x] `POST /api/projects/:projectId/issues/:issueId/attachments/:id/commit` — after the client uploads directly to SeaweedFS, runs a server-side `HeadObject` to verify actual size, then locks the `Attachment` row (`SELECT ... FOR UPDATE`) before finalizing
+
+Deviated from the plan's flat `/api/attachments/reserve` + `/api/attachments/commit` paths: nested them under `/api/projects/:projectId/issues/:issueId/attachments` instead, so `issueId` comes from the URL (and is checked against `projectId` via the existing `issueService.getIssue`) rather than a client-supplied body field — consistent with how every other resource in this app derives its scope from the URL/JWT, never from trusted request body fields (see Milestone 3's `POST /api/users` fix).
+
+Attachments belong to `Issue` (per the entity hierarchy at the top of this doc), with the same composite-FK-to-parent + RLS pattern as `Issue`→`Project`: `Attachment.organisation_id` is part of a composite FK to `Issue(organisation_id, id)`, so a cross-tenant or cross-issue attachment row is structurally impossible, not just app-checked. `scripts/leakAudit.ts` / `src/__tests__/leakAudit.test.ts` were extended to cover it.
+
+`UsageCounter.value`/`max_limit` were widened from `Int` to `BigInt`: `STORAGE_BYTES` counts raw bytes, and the Professional tier's 10GB limit (10,737,418,240 bytes) already overflows Postgres's/Prisma's 32-bit `Int`. `claimUsage`/`releaseUsage` now take an optional `amount` (default 1, so every existing PROJECTS/TASKS/USERS call site is unchanged) and accept bigint amounts for byte-level claims.
+
+A reservation that's never committed (client got a presigned URL and abandoned it) would otherwise permanently eat into the org's storage quota — there's no background job runner in this app, so instead every `reserve` call first sweeps the org's own expired (`expires_at` in the past) `RESERVED` rows, releases their claimed bytes, and marks them `EXPIRED`. Lazy, not scheduled, but the only code path that can create new pressure on the quota is exactly the one guaranteed to run the sweep first.
+
+`commit` reconciles the storage claim against the real uploaded size (from `HeadObject`), not just the client's declared size: a smaller real upload releases the difference, a larger one claims the difference — and if that claim would exceed the plan's quota, the commit is rejected and the orphaned object is deleted from SeaweedFS (`src/lib/s3.ts#deleteObject`, best-effort/logged, not thrown — the DB is the source of truth, an unreachable storage backend at cleanup time just leaves an orphaned object rather than corrupting the attachment's state).
+
+One real integration bug found while wiring up the presigned upload: `@aws-sdk/client-s3`'s newer default of always attaching a flexible checksum (`x-amz-checksum-crc32`) to `PutObject` requests breaks presigned URLs specifically — the checksum gets computed over an empty body at signing time (the real bytes don't exist yet) and baked into the signed query string, so the actual upload's real checksum then mismatches it and SeaweedFS rejects the PUT with `BadDigest`. Fixed by setting `requestChecksumCalculation: 'WHEN_REQUIRED'` on the `S3Client` (`src/lib/s3.ts`). Caught by testing the real upload path end-to-end (PUT-ing real bytes to a real presigned URL against the live SeaweedFS container), not by inspection.
 
 ### Storage Limits
-- [ ] Enforce `storage_bytes` cap in `usage_counters` during reserve step
-- [ ] Return `409` with remaining bytes info if limit exceeded
+- [x] Enforce `storage_bytes` cap in `usage_counters` during reserve step — same atomic `claimUsage` conditional-UPDATE pattern as PROJECTS/TASKS/USERS, so concurrent reservations racing for the last bytes are serialized by Postgres's row lock, not a count-then-reserve race (test: `src/__tests__/attachments.test.ts`, "lets exactly one of two simultaneous reservations through")
+- [x] Return `409` with remaining bytes info if limit exceeded — message format mirrors the other resource types (e.g. `"Storage bytes limit reached: 95.0MB of 100.0MB storage bytes used on the Starter plan"`), converted from raw bytes to MB for readability
+- [x] Hard per-file size cap (`ATTACHMENT_MAX_FILE_SIZE_MB`, default 200MB) independent of remaining plan quota, rejected with `413 Payload Too Large` — bounds a single upload regardless of how much headroom an org's plan otherwise has
+- [x] Content-type allow-list and file-name path-traversal rejection at the validator layer (`src/validators/attachment.ts`), before any quota or storage work runs
+
+Verified end-to-end via `npm test` (Milestone 4 adds 8 tests in `src/__tests__/attachments.test.ts`: full reserve→upload→commit→list/get flow against the live SeaweedFS container, rejection of unuploaded commits/oversized files/disallowed content-types/path-traversal names, storage-limit enforcement + release-on-delete, concurrent-reservation quota safety, expired-reservation sweep, and cross-tenant isolation on get/commit/delete) plus `npm run audit:leak`.
+
+Known limitation: a `deleteObject` failure after a successful DB delete (e.g. SeaweedFS briefly unreachable) leaves an orphaned object in storage — logged, not retried. No background job/reconciliation sweep exists for that case; out of scope for this milestone.
 
 ---
 
