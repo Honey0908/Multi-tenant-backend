@@ -2,6 +2,7 @@ import { Router, type Request } from 'express';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/tenantContext.js';
 import { createIssueSchema, updateIssueSchema } from '../validators/issue.js';
+import { paginationQuerySchema } from '../lib/pagination.js';
 import { createIssue, listIssues, getIssue, updateIssue, deleteIssue } from '../services/issueService.js';
 import { logger } from '../lib/logger.js';
 
@@ -23,7 +24,8 @@ issuesRouter.post('/', async (req: Request<{ projectId: string }>, res, next) =>
 issuesRouter.get('/', async (req: Request<{ projectId: string }>, res, next) => {
   try {
     const projectId = z.string().uuid().parse(req.params.projectId);
-    res.json(await listIssues(projectId));
+    const pagination = paginationQuerySchema.parse(req.query);
+    res.json(await listIssues(projectId, pagination));
   } catch (error) {
     next(error);
   }

@@ -17,7 +17,7 @@ describe('projects CRUD', () => {
 
     const list = await request(app).get('/api/projects').set(auth);
     expect(list.status).toBe(200);
-    expect(list.body.map((p: { id: string }) => p.id)).toContain(id);
+    expect(list.body.items.map((p: { id: string }) => p.id)).toContain(id);
 
     const patch = await request(app).patch(`/api/projects/${id}`).set(auth).send({ status: 'ARCHIVED' });
     expect(patch.status).toBe(200);

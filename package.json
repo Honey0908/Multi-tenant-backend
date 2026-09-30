@@ -12,7 +12,8 @@
     "start": "node dist/index.js",
     "test": "vitest run",
     "db:seed": "tsx prisma/seed.ts",
-    "audit:leak": "tsx scripts/leakAudit.ts"
+    "audit:leak": "tsx scripts/leakAudit.ts",
+    "audit:spec": "tsx scripts/specDrift.ts"
   },
   "keywords": [],
   "author": "",
@@ -24,6 +25,7 @@
     "@prisma/adapter-pg": "^7.10.0",
     "@prisma/client": "^7.10.0",
     "argon2": "^0.45.1",
+    "cors": "^2.8.6",
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
     "pg": "^8.23.0",
@@ -34,6 +36,7 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^26.6.1",

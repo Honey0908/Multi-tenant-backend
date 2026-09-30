@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { platformPrisma } from '../lib/platformPrisma.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { withOrgContext } from '../lib/db.js';
+import { getTenantContext } from '../lib/requestContext.js';
 import { initUsageCounters } from '../lib/usageCounters.js';
 import { ConflictError } from '../lib/errors.js';
 import type { CreateOrganisationInput } from '../validators/organisation.js';
@@ -58,4 +59,64 @@ export async function createOrganisation(input: CreateOrganisationInput) {
  */
 export async function getOrganisationById(id: string) {
   return platformPrisma.organisation.findUnique({ where: { id }, include: { plan: true } });
+}
+
+/** Resource types in the order the UI presents them, with the key each is reported under. */
+const USAGE_KEYS = [
+  { resource: 'USERS', key: 'users' },
+  { resource: 'PROJECTS', key: 'projects' },
+  { resource: 'TASKS', key: 'tasks' },
+  { resource: 'STORAGE_BYTES', key: 'storageBytes' },
+] as const;
+
+/** The caller's own organisation — derived from their token, never from a path parameter. */
+export async function getOwnOrganisation() {
+  const { orgId } = getTenantContext();
+
+  return withOrgContext(orgId, (tx) =>
+    tx.organisation.findUniqueOrThrow({ where: { id: orgId }, include: { plan: true } }),
+  );
+}
+
+/**
+ * Live quota for the caller's organisation, read straight from the
+ * UsageCounter rows that enforcement actually consults — so what the
+ * dashboard shows can never drift from what a create request will decide.
+ *
+ * Counter values are BIGINT (storage is counted in raw bytes), which
+ * JSON.stringify cannot serialize, so each is narrowed to a number here.
+ * Byte counts stay far below Number.MAX_SAFE_INTEGER at any plan size.
+ */
+export async function getOwnUsage() {
+  const { orgId } = getTenantContext();
+
+  return withOrgContext(orgId, async (tx) => {
+    const organisation = await tx.organisation.findUniqueOrThrow({
+      where: { id: orgId },
+      include: { plan: true },
+    });
+    const counters = await tx.usageCounter.findMany({ where: { organisation_id: orgId } });
+    const byResource = new Map(counters.map((c) => [c.resource_type, c]));
+
+    const usage = Object.fromEntries(
+      USAGE_KEYS.map(({ resource, key }) => {
+        const counter = byResource.get(resource);
+        const used = Number(counter?.value ?? 0);
+        const limit = Number(counter?.max_limit ?? 0);
+        return [key, { used, limit, remaining: Math.max(limit - used, 0) }];
+      }),
+    );
+
+    return {
+      organisation: { id: organisation.id, name: organisation.name, slug: organisation.slug, status: organisation.status },
+      plan: {
+        name: organisation.plan.name,
+        maxUsers: organisation.plan.max_users,
+        maxProjects: organisation.plan.max_projects,
+        maxTasks: organisation.plan.max_tasks,
+        maxStorageMb: organisation.plan.max_storage_mb,
+      },
+      usage,
+    };
+  });
 }

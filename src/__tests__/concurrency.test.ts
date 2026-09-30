@@ -29,7 +29,7 @@ describe('concurrency-safe plan limits', () => {
     expect(statuses).toEqual([201, 409]);
 
     const list = await request(app).get('/api/projects').set(auth);
-    expect(list.body).toHaveLength(3);
+    expect(list.body.pagination.total).toBe(3);
   });
 
   it('lets exactly one of ten simultaneous requests through at the limit', async () => {
@@ -53,6 +53,6 @@ describe('concurrency-safe plan limits', () => {
     expect(rejected).toHaveLength(9);
 
     const list = await request(app).get('/api/projects').set(auth);
-    expect(list.body).toHaveLength(3);
+    expect(list.body.pagination.total).toBe(3);
   });
 });

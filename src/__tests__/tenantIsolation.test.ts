@@ -30,8 +30,8 @@ describe('tenant isolation', () => {
 
     const listB = await request(app).get('/api/projects').set('Authorization', `Bearer ${orgB.token}`);
     expect(listB.status).toBe(200);
-    expect(listB.body).toHaveLength(1);
-    expect(listB.body[0].id).not.toBe(projectAId);
+    expect(listB.body.items).toHaveLength(1);
+    expect(listB.body.items[0].id).not.toBe(projectAId);
 
     const getB = await request(app)
       .get(`/api/projects/${projectAId}`)

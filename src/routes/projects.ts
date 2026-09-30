@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/tenantContext.js';
 import { createProjectSchema, updateProjectSchema } from '../validators/project.js';
+import { paginationQuerySchema } from '../lib/pagination.js';
 import { createProject, listProjects, getProject, updateProject, deleteProject } from '../services/projectService.js';
 import { logger } from '../lib/logger.js';
 
@@ -19,9 +20,10 @@ projectsRouter.post('/', async (req, res, next) => {
   }
 });
 
-projectsRouter.get('/', async (_req, res, next) => {
+projectsRouter.get('/', async (req, res, next) => {
   try {
-    res.json(await listProjects());
+    const pagination = paginationQuerySchema.parse(req.query);
+    res.json(await listProjects(pagination));
   } catch (error) {
     next(error);
   }

@@ -6,6 +6,7 @@ import { claimUsage, releaseUsage } from '../lib/usageCounters.js';
 import { ResourceType } from '../generated/prisma/enums.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { NotFoundError } from '../lib/errors.js';
+import { paginate, toSkipTake, type PaginationInput } from '../lib/pagination.js';
 import type { CreateProjectInput, UpdateProjectInput } from '../validators/project.js';
 
 export async function createProject(input: CreateProjectInput) {
@@ -33,8 +34,19 @@ export async function createProject(input: CreateProjectInput) {
   });
 }
 
-export async function listProjects() {
-  return tenantDb().project.findMany({ orderBy: { created_at: 'asc' } });
+export async function listProjects(pagination: PaginationInput) {
+  const { orgId } = getTenantContext();
+
+  // Filtering and paging both happen in Postgres — the app never pulls the
+  // full set into memory to slice it (see requirement §27/§28).
+  return withOrgContext(orgId, async (tx) => {
+    const projects = await tx.project.findMany({
+      orderBy: { created_at: 'asc' },
+      ...toSkipTake(pagination),
+    });
+    const total = await tx.project.count();
+    return paginate(projects, total, pagination);
+  });
 }
 
 export async function getProject(id: string) {

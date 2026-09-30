@@ -33,9 +33,9 @@ describe('platform admin routes', () => {
 
     const listUsers = await request(app).get(`/api/organisations/${target.organisationId}/users`).set(adminAuth);
     expect(listUsers.status).toBe(200);
-    expect(listUsers.body).toHaveLength(1);
-    expect(listUsers.body[0].id).toBe(target.userId);
-    expect(listUsers.body[0].password_hash).toBeUndefined();
+    expect(listUsers.body.items).toHaveLength(1);
+    expect(listUsers.body.items[0].id).toBe(target.userId);
+    expect(listUsers.body.items[0].password_hash).toBeUndefined();
   });
 
   it('lets a PLATFORM_ADMIN provision a bare organisation', async () => {

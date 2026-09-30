@@ -34,7 +34,7 @@ describe('issues CRUD', () => {
 
     const list = await request(app).get(`/api/projects/${projectId}/issues`).set(auth);
     expect(list.status).toBe(200);
-    expect(list.body.map((i: { id: string }) => i.id)).toContain(id);
+    expect(list.body.items.map((i: { id: string }) => i.id)).toContain(id);
 
     const patch = await request(app)
       .patch(`/api/projects/${projectId}/issues/${id}`)

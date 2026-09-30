@@ -10,6 +10,10 @@ servers:
 
 tags:
   - name: Auth
+  - name: Organisation
+    description: The caller's own organisation and its live plan usage.
+  - name: Users
+    description: Managing members of the caller's own organisation.
   - name: Projects
   - name: Issues
   - name: Attachments
@@ -28,6 +32,7 @@ security:
 paths:
   /auth/signup:
     post:
+      operationId: signup
       tags: [Auth]
       summary: Atomically create an organisation, its first ORG_ADMIN user, and issue a token
       security: []
@@ -51,6 +56,7 @@ paths:
 
   /auth/login:
     post:
+      operationId: login
       tags: [Auth]
       summary: Exchange email/password for a JWT
       security: []
@@ -71,8 +77,106 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
-  /users:
+  /auth/me:
+    get:
+      operationId: getCurrentUser
+      tags: [Auth]
+      summary: Resolve the bearer token to the current user and organisation
+      description: >
+        Re-reads the caller's row from the database rather than trusting the
+        token's claims: a JWT keeps asserting the role and account it was
+        minted with until it expires, so a user deactivated or demoted in the
+        meantime must not keep their old access. Call this on app boot to
+        restore a session — never decode the JWT in the browser to decide
+        what a user may do.
+      responses:
+        '200':
+          description: The authenticated user and their organisation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user: { $ref: '#/components/schemas/User' }
+                  organisation: { $ref: '#/components/schemas/Organisation' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /auth/logout:
     post:
+      operationId: logout
+      tags: [Auth]
+      summary: Record a logout
+      description: >
+        Access tokens are stateless, so there is nothing to revoke
+        server-side — logging out is the client discarding its token. This
+        endpoint exists so the client has one obvious call to make and the
+        event reaches the audit log.
+      responses:
+        '204': { description: Logged out }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /organisation:
+    get:
+      operationId: getOwnOrganisation
+      tags: [Organisation]
+      summary: The caller's own organisation
+      description: >
+        Scoped entirely by the token — there is deliberately no id in the
+        path, so a tenant cannot name another organisation. Distinct from the
+        platform-admin /organisations surface.
+      responses:
+        '200':
+          description: The caller's organisation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Organisation' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /organisation/usage:
+    get:
+      operationId: getOwnUsage
+      tags: [Organisation]
+      summary: Live plan usage for the caller's organisation
+      description: >
+        Read from the same UsageCounter rows that enforcement consults, so
+        what the dashboard shows can never disagree with what a create
+        request will decide. storageBytes is in bytes.
+      responses:
+        '200':
+          description: Plan limits and current usage
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UsageResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /users:
+    get:
+      operationId: listUsers
+      tags: [Users]
+      summary: List the caller's own organisation's members
+      description: >
+        Readable by any authenticated member, not only admins — members need
+        the directory to see colleagues and pick assignees. Managing those
+        users stays admin-only. Always scoped to the caller's organisation.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Organisation members
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginationEnvelope'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      operationId: createUser
       tags: [Auth]
       summary: Add a member to the caller's own organisation
       description: >
@@ -99,8 +203,75 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /users/{id}:
+    get:
+      operationId: getUser
+      tags: [Users]
+      summary: One member of the caller's own organisation
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: The member
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      operationId: updateUser
+      tags: [Users]
+      summary: Update a member's name, role, or status
+      description: >
+        ORG_ADMIN only. A user in another organisation is invisible to RLS
+        and so returns 404, never 403 — the response must not confirm that
+        the id exists. PLATFORM_ADMIN can never be assigned here.
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateUserRequest' }
+      responses:
+        '200':
+          description: The updated member
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Would leave the organisation with no active administrator
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    delete:
+      operationId: deleteUser
+      tags: [Users]
+      summary: Remove a member and free their seat
+      description: >
+        ORG_ADMIN only. Releases the USERS quota the account was holding.
+        Refused if the caller targets themselves, or if it would leave the
+        organisation with no active administrator.
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '204': { description: Removed }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Self-deletion, or would leave no active administrator
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
   /organisations:
     post:
+      operationId: createOrganisation
       tags: [Platform Admin]
       summary: Provision a bare organisation (no initial user)
       responses:
@@ -119,6 +290,7 @@ paths:
 
   /organisations/{id}:
     get:
+      operationId: getOrganisation
       tags: [Platform Admin]
       summary: Fetch an organisation's metadata by id
       parameters:
@@ -134,6 +306,7 @@ paths:
 
   /organisations/{orgId}/users:
     get:
+      operationId: listOrganisationUsers
       tags: [Platform Admin]
       summary: List one organisation's members
       description: >
@@ -141,20 +314,28 @@ paths:
         with SELECT grants limited to Organisation/SubscriptionPlan/User —
         it cannot see Project, Issue, or UsageCounter rows even if asked to.
       parameters:
-        - $ref: '#/components/parameters/OrganisationId'
+        - $ref: '#/components/parameters/OrganisationIdPath'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
       responses:
         '200':
           description: Members of the organisation
           content:
             application/json:
               schema:
-                type: array
-                items: { $ref: '#/components/schemas/User' }
+                allOf:
+                  - $ref: '#/components/schemas/PaginationEnvelope'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/User' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
   /projects:
     post:
+      operationId: createProject
       tags: [Projects]
       summary: Create a project in the caller's organisation
       description: >
@@ -181,20 +362,30 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
     get:
+      operationId: listProjects
       tags: [Projects]
       summary: List the caller's organisation's projects
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
       responses:
         '200':
           description: Projects
           content:
             application/json:
               schema:
-                type: array
-                items: { $ref: '#/components/schemas/Project' }
+                allOf:
+                  - $ref: '#/components/schemas/PaginationEnvelope'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/Project' }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
   /projects/{id}:
     get:
+      operationId: getProject
       tags: [Projects]
       summary: Fetch a single project
       parameters:
@@ -208,6 +399,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
     patch:
+      operationId: updateProject
       tags: [Projects]
       summary: Update a project
       parameters:
@@ -227,6 +419,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
     delete:
+      operationId: deleteProject
       tags: [Projects]
       summary: Delete a project
       description: Releases its claimed UsageCounter slot atomically in the same transaction as the delete.
@@ -239,6 +432,7 @@ paths:
 
   /projects/{projectId}/issues:
     post:
+      operationId: createIssue
       tags: [Issues]
       summary: Create a task in a project
       description: Enforces the plan's task limit atomically via UsageCounter, same as project creation.
@@ -264,23 +458,32 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
     get:
+      operationId: listIssues
       tags: [Issues]
       summary: List a project's tasks
       parameters:
         - $ref: '#/components/parameters/ProjectIdPath'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
       responses:
         '200':
           description: Issues
           content:
             application/json:
               schema:
-                type: array
-                items: { $ref: '#/components/schemas/Issue' }
+                allOf:
+                  - $ref: '#/components/schemas/PaginationEnvelope'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/Issue' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
   /projects/{projectId}/issues/{id}:
     get:
+      operationId: getIssue
       tags: [Issues]
       summary: Fetch a single task
       parameters:
@@ -295,6 +498,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
     patch:
+      operationId: updateIssue
       tags: [Issues]
       summary: Update a task
       parameters:
@@ -315,6 +519,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
     delete:
+      operationId: deleteIssue
       tags: [Issues]
       summary: Delete a task
       description: Releases its claimed UsageCounter slot atomically in the same transaction as the delete.
@@ -328,6 +533,7 @@ paths:
 
   /projects/{projectId}/issues/{issueId}/attachments/reserve:
     post:
+      operationId: reserveAttachment
       tags: [Attachments]
       summary: Reserve storage quota for a file upload and get a presigned upload URL
       description: >
@@ -363,7 +569,9 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+  /projects/{projectId}/issues/{issueId}/attachments:
     get:
+      operationId: listAttachments
       tags: [Attachments]
       summary: List an issue's successfully uploaded attachments
       description: Only COMMITTED attachments are listed — reservations still awaiting upload or expired are not.
@@ -383,6 +591,7 @@ paths:
 
   /projects/{projectId}/issues/{issueId}/attachments/{id}/commit:
     post:
+      operationId: commitAttachment
       tags: [Attachments]
       summary: Finalize an attachment after the client has uploaded it to the presigned URL
       description: >
@@ -415,6 +624,7 @@ paths:
 
   /projects/{projectId}/issues/{issueId}/attachments/{id}:
     get:
+      operationId: getAttachment
       tags: [Attachments]
       summary: Fetch a single committed attachment's metadata
       parameters:
@@ -430,6 +640,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
     delete:
+      operationId: deleteAttachment
       tags: [Attachments]
       summary: Delete an attachment
       description: >
@@ -454,8 +665,30 @@ components:
       description: Obtained from POST /api/auth/signup or POST /api/auth/login. Payload is { userId, orgId, role }.
 
   parameters:
+    Page:
+      name: page
+      in: query
+      required: false
+      description: 1-based page number.
+      schema: { type: integer, minimum: 1, default: 1 }
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Rows per page. Capped so one request cannot pull a whole table into memory.
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    UserId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     OrganisationId:
       name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    OrganisationIdPath:
+      name: orgId
       in: path
       required: true
       schema: { type: string, format: uuid }
@@ -516,6 +749,67 @@ components:
           schema: { $ref: '#/components/schemas/Error' }
 
   schemas:
+    PaginationEnvelope:
+      type: object
+      description: >
+        The shape every list endpoint returns. Rows are filtered and paged in
+        PostgreSQL — the API never loads a full set into memory to slice it.
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items: {}
+        pagination:
+          type: object
+          required: [page, limit, total, totalPages]
+          properties:
+            page: { type: integer, example: 1 }
+            limit: { type: integer, example: 20 }
+            total: { type: integer, description: Total matching rows across all pages, example: 120 }
+            totalPages: { type: integer, example: 6 }
+    UpdateUserRequest:
+      type: object
+      minProperties: 1
+      description: At least one field is required. PLATFORM_ADMIN is intentionally not assignable.
+      properties:
+        firstName: { type: string, minLength: 1, maxLength: 80 }
+        lastName: { type: string, minLength: 1, maxLength: 80 }
+        role: { type: string, enum: [ORG_ADMIN, ORG_MEMBER] }
+        status: { type: string, enum: [ACTIVE, INACTIVE] }
+    UsageQuota:
+      type: object
+      required: [used, limit, remaining]
+      properties:
+        used: { type: integer }
+        limit: { type: integer }
+        remaining: { type: integer }
+    UsageResponse:
+      type: object
+      required: [organisation, plan, usage]
+      properties:
+        organisation:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            name: { type: string }
+            slug: { type: string }
+            status: { type: string, enum: [ACTIVE, SUSPENDED] }
+        plan:
+          type: object
+          properties:
+            name: { type: string, example: Starter }
+            maxUsers: { type: integer }
+            maxProjects: { type: integer }
+            maxTasks: { type: integer }
+            maxStorageMb: { type: integer }
+        usage:
+          type: object
+          description: Keyed by resource. storageBytes is counted in bytes, not MB.
+          properties:
+            users: { $ref: '#/components/schemas/UsageQuota' }
+            projects: { $ref: '#/components/schemas/UsageQuota' }
+            tasks: { $ref: '#/components/schemas/UsageQuota' }
+            storageBytes: { $ref: '#/components/schemas/UsageQuota' }
     Error:
       type: object
       properties:
@@ -670,7 +964,7 @@ components:
         uploaded_by: { type: string, format: uuid }
         file_name: { type: string }
         content_type: { type: string }
-        size_bytes: { type: integer, description: Reserved size until committed, then the server-verified real size. }
+        size_bytes: { type: integer, description: "Reserved size until committed, then the server-verified real size." }
         storage_key: { type: string }
         status: { type: string, enum: [RESERVED, COMMITTED, EXPIRED] }
         expires_at: { type: string, format: date-time, nullable: true }

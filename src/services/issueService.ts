@@ -5,6 +5,7 @@ import { getTenantContext } from '../lib/requestContext.js';
 import { claimUsage, releaseUsage } from '../lib/usageCounters.js';
 import { ResourceType } from '../generated/prisma/enums.js';
 import { NotFoundError } from '../lib/errors.js';
+import { paginate, toSkipTake, type PaginationInput } from '../lib/pagination.js';
 import type { CreateIssueInput, UpdateIssueInput } from '../validators/issue.js';
 
 async function assertProjectExists(projectId: string): Promise<void> {
@@ -39,9 +40,20 @@ export async function createIssue(projectId: string, input: CreateIssueInput) {
   });
 }
 
-export async function listIssues(projectId: string) {
+export async function listIssues(projectId: string, pagination: PaginationInput) {
   await assertProjectExists(projectId);
-  return tenantDb().issue.findMany({ where: { project_id: projectId }, orderBy: { created_at: 'asc' } });
+  const { orgId } = getTenantContext();
+
+  return withOrgContext(orgId, async (tx) => {
+    const where = { project_id: projectId };
+    const issues = await tx.issue.findMany({
+      where,
+      orderBy: { created_at: 'asc' },
+      ...toSkipTake(pagination),
+    });
+    const total = await tx.issue.count({ where });
+    return paginate(issues, total, pagination);
+  });
 }
 
 export async function getIssue(projectId: string, id: string) {

@@ -14,3 +14,17 @@ export const createUserSchema = z.object({
 });
 
 export type CreateUserInput = z.infer<typeof createUserSchema>;
+
+// PLATFORM_ADMIN is excluded here for the same reason as on creation: no
+// API path may ever mint or promote into the platform role (see
+// prisma/seed.ts, which bootstraps the only one).
+export const updateUserSchema = z
+  .object({
+    firstName: z.string().trim().min(1).max(80).optional(),
+    lastName: z.string().trim().min(1).max(80).optional(),
+    role: z.enum(['ORG_ADMIN', 'ORG_MEMBER']).optional(),
+    status: z.enum(['ACTIVE', 'INACTIVE']).optional(),
+  })
+  .refine((obj) => Object.keys(obj).length > 0, { message: 'At least one field is required' });
+
+export type UpdateUserInput = z.infer<typeof updateUserSchema>;

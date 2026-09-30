@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import argon2 from 'argon2';
 import { withOrgContext } from '../lib/db.js';
+import { getTenantContext } from '../lib/requestContext.js';
 import { authPrisma } from '../lib/authPrisma.js';
 import { signAccessToken } from '../lib/jwt.js';
 import { Prisma } from '../generated/prisma/client.js';
@@ -95,4 +96,38 @@ export async function login(input: LoginInput) {
   const token = signAccessToken({ userId: user.id, orgId: user.organisation_id, role: user.role });
 
   return { token, user: omitPasswordHash(user) };
+}
+
+/**
+ * Resolves the caller from their token back to live database state.
+ *
+ * A JWT is a snapshot: it keeps asserting the role and account it was
+ * minted with until it expires, even if the user has since been
+ * deactivated, demoted, or removed. So this re-reads the row on every call
+ * rather than trusting the claims, and rejects a token whose user no longer
+ * exists or is no longer ACTIVE. The SPA calls this on boot to restore a
+ * session, which is also why it must not simply echo the token back: the
+ * frontend should never decode a JWT to decide what a user may do.
+ */
+export async function getCurrentUser() {
+  const { orgId, userId } = getTenantContext();
+
+  return withOrgContext(orgId, async (tx) => {
+    // RLS confines this to the caller's own organisation, so a token whose
+    // orgId and userId disagree resolves to nothing.
+    const user = await tx.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      throw new UnauthorizedError('Account no longer exists');
+    }
+    if (user.status !== 'ACTIVE') {
+      throw new UnauthorizedError('Account is not active');
+    }
+
+    const organisation = await tx.organisation.findUniqueOrThrow({
+      where: { id: orgId },
+      include: { plan: true },
+    });
+
+    return { user: omitPasswordHash(user), organisation };
+  });
 }
