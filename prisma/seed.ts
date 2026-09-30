@@ -1,8 +1,20 @@
+import '../src/env.js';
 import { randomUUID } from 'node:crypto';
 import argon2 from 'argon2';
-import { prisma } from '../src/lib/prisma.js';
-import { withOrgContext } from '../src/lib/db.js';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { PrismaClient } from '../src/generated/prisma/client.js';
 import { initUsageCounters } from '../src/lib/usageCounters.js';
+
+// Seeding is an operational task, like `prisma migrate`, so it connects as
+// the migration role (DATABASE_URL) rather than the app's `app_user` —
+// the same choice scripts/leakAudit.ts makes. Two things now require it:
+// `app_user` deliberately has no write access to the global
+// SubscriptionPlan catalog, and RLS on "Organisation"/"User" would hide the
+// very rows the idempotency checks below look for (both per the
+// add_organisation_rls migration). Superusers bypass RLS unconditionally,
+// so no app.org_id needs setting here.
+const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
+const prisma = new PrismaClient({ adapter });
 
 const PLATFORM_ADMIN_EMAIL = process.env.PLATFORM_ADMIN_EMAIL ?? 'platform-admin@taskflow.local';
 const PLATFORM_ADMIN_PASSWORD = process.env.PLATFORM_ADMIN_PASSWORD ?? 'change-me-in-production';
@@ -61,7 +73,7 @@ async function seedPlatformAdmin() {
   const orgId = existingOrg?.id ?? randomUUID();
   const passwordHash = await argon2.hash(PLATFORM_ADMIN_PASSWORD);
 
-  await withOrgContext(orgId, async (tx) => {
+  await prisma.$transaction(async (tx) => {
     if (!existingOrg) {
       await tx.organisation.create({
         data: { id: orgId, name: 'Platform Operations', slug: PLATFORM_ORG_SLUG, plan_id: enterprisePlan.id },

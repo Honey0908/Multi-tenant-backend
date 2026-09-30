@@ -1,4 +1,6 @@
 import { withOrgContext, tenantDb } from '../lib/db.js';
+import { purgeAttachmentsOfProject } from '../lib/cascade.js';
+import { deleteObject } from '../lib/s3.js';
 import { getTenantContext } from '../lib/requestContext.js';
 import { claimUsage, releaseUsage } from '../lib/usageCounters.js';
 import { ResourceType } from '../generated/prisma/enums.js';
@@ -57,11 +59,31 @@ export async function updateProject(id: string, input: UpdateProjectInput) {
 export async function deleteProject(id: string) {
   const { orgId } = getTenantContext();
 
-  await withOrgContext(orgId, async (tx) => {
+  // Children are removed explicitly, deepest first, so their quota can be
+  // settled from real row counts — `ON DELETE CASCADE` would remove them
+  // silently and strand the counters (see lib/cascade.ts). If the project
+  // turns out not to exist, the NotFoundError below rolls the whole
+  // transaction back, so nothing is deleted.
+  const orphanedKeys = await withOrgContext(orgId, async (tx) => {
+    const storageKeys = await purgeAttachmentsOfProject(tx, orgId, id);
+    const { count: deletedIssues } = await tx.issue.deleteMany({
+      where: { project_id: id, organisation_id: orgId },
+    });
+
     const { count } = await tx.project.deleteMany({ where: { id, organisation_id: orgId } });
     if (count === 0) {
       throw new NotFoundError(`Project ${id} not found`);
     }
+
     await releaseUsage(tx, orgId, ResourceType.PROJECTS);
+    if (deletedIssues > 0) {
+      await releaseUsage(tx, orgId, ResourceType.TASKS, deletedIssues);
+    }
+    return storageKeys;
   });
+
+  // Best-effort, after the transaction commits: the DB is the source of
+  // truth, so an unreachable storage backend leaves an orphaned object
+  // rather than blocking the delete (same contract as deleteAttachment).
+  await Promise.all(orphanedKeys.map(deleteObject));
 }

@@ -1,4 +1,6 @@
 import { tenantDb, withOrgContext } from '../lib/db.js';
+import { purgeAttachmentsOfIssue } from '../lib/cascade.js';
+import { deleteObject } from '../lib/s3.js';
 import { getTenantContext } from '../lib/requestContext.js';
 import { claimUsage, releaseUsage } from '../lib/usageCounters.js';
 import { ResourceType } from '../generated/prisma/enums.js';
@@ -62,11 +64,21 @@ export async function updateIssue(projectId: string, id: string, input: UpdateIs
 export async function deleteIssue(projectId: string, id: string) {
   const { orgId } = getTenantContext();
 
-  await withOrgContext(orgId, async (tx) => {
+  // Attachments go first so their storage quota is settled from real row
+  // counts rather than vanishing silently down the FK cascade (see
+  // lib/cascade.ts). An issue id that belongs to a different project fails
+  // the delete below and rolls the attachment purge back with it.
+  const orphanedKeys = await withOrgContext(orgId, async (tx) => {
+    const storageKeys = await purgeAttachmentsOfIssue(tx, orgId, id);
+
     const { count } = await tx.issue.deleteMany({ where: { id, project_id: projectId, organisation_id: orgId } });
     if (count === 0) {
       throw new NotFoundError(`Issue ${id} not found`);
     }
+
     await releaseUsage(tx, orgId, ResourceType.TASKS);
+    return storageKeys;
   });
+
+  await Promise.all(orphanedKeys.map(deleteObject));
 }

@@ -177,6 +177,42 @@ Known limitation: a `deleteObject` failure after a successful DB delete (e.g. Se
 
 ---
 
+---
+
+## Post-Milestone Audit — Fixes
+
+Two defects found auditing Milestones 1–4 against `docs/multi-tenant-subscription.md`, both fixed and covered by regression tests.
+
+### 1. Cascading deletes stranded plan quota
+
+`deleteProject` released one `PROJECTS` unit and `deleteIssue` released one `TASKS` unit — but both leaned on `ON DELETE CASCADE` for everything below them. A cascade deletes rows without reporting a count, so the quota those children held was never released: deleting a project with 3 issues left `TASKS` stuck at 3 with no API path to reclaim it, and deleting an issue with a 5000-byte attachment stranded those bytes *and* orphaned the object in SeaweedFS. Over time an org silently loses headroom it paid for.
+
+Fixed in `src/lib/cascade.ts`: the delete paths now remove children explicitly, deepest first, and settle the counters from what the `DELETE` actually returned. `DELETE ... RETURNING` is a single statement, so there is no count-then-delete gap for a concurrent write to slip through — the accounting matches exactly the rows removed, never a stale count. Orphaned storage keys come back from the transaction and are dropped from SeaweedFS after it commits, on the same best-effort contract `deleteAttachment` already used. The FK cascades stay in place as a backstop for deletes outside these paths.
+
+Tests: `src/__tests__/cascadeQuota.test.ts` (5) — task slots freed by a project delete, storage freed by an issue delete, storage freed two levels down, slots genuinely reusable afterwards rather than merely correct on paper, and a bystander org's counters left untouched.
+
+### 2. `Organisation` had no RLS; `app_user` could rewrite the plan catalog
+
+`Organisation` was the one tenant-scoped table never given Row-Level Security, and `SubscriptionPlan` left the application role with full write access. Verified against the live database: a tenant's own connection could read **every** organisation's name and slug (311 rows at the time), and could `UPDATE "SubscriptionPlan"` to raise `max_projects`/`max_users`/`max_storage_mb` for every tenant on that tier — voiding plan enforcement platform-wide.
+
+No route exposed either, because every service hand-filters by the caller's org id. But that is precisely the property this codebase exists not to depend on (§9's careless-query requirement): `organisation.findMany()` with no `where` returned the whole platform.
+
+Fixed in the `add_organisation_rls` migration:
+- `Organisation` gets `ENABLE`/`FORCE ROW LEVEL SECURITY` with the same `current_org_id()` guard as every other tenant table, matching on `id` since the tenant row *is* the tenant.
+- A second policy, `platform_read_policy`, is scoped `FOR SELECT TO platform_reader USING (true)`. Postgres ORs permissive policies, so platform admins keep cross-tenant visibility of org metadata while `app_user` stays confined to its own row. `platform_reader` still holds no grants on `Project`/`Issue`/`Attachment`, so this widens metadata visibility only, never tenant content.
+- `REVOKE INSERT, UPDATE, DELETE ON "SubscriptionPlan" FROM app_user`. The catalog is global and deliberately keeps no RLS — every org must read the plan it is on — but the app role no longer writes it.
+
+Three call sites had to change to suit:
+- The slug pre-check in `signup`/`createOrganisation` could no longer see other tenants' rows, so slug collisions are now detected from the unique index via `P2002`. This is also race-free where the old check-then-create was not: two simultaneous signups claiming one slug could both pass the check. `slug` is the only unique constraint on `Organisation`, so the error is unambiguous.
+- `getOrganisationById` keeps running with no org context, now reading through `platform_read_policy`.
+- `prisma/seed.ts` moved to the migration role (`DATABASE_URL`), like `scripts/leakAudit.ts`: `app_user` no longer writes the plan catalog, and RLS would hide the rows its idempotency checks look for. Superusers bypass RLS, so it sets no org context.
+
+Tests: `src/__tests__/organisationIsolation.test.ts` (7) — including the walkthrough's careless-query demonstration (an unfiltered `organisation.findMany()` returning only the caller's org), a rejected plan-catalog write, and regression cover for platform-admin visibility and duplicate-slug `409`s.
+
+Verified end-to-end: full suite **48 passing**, migrations replay cleanly onto an empty database, `npm run db:seed` idempotent across re-runs, and `npm run audit:leak` clean. Final RLS posture — every tenant table `ENABLE`+`FORCE`, `SubscriptionPlan` intentionally open for reads and `SELECT`-only for `app_user`.
+
+Still outstanding from the audit (not addressed here): `User.email` is globally rather than per-org unique; `requireAuth` does not revalidate user state against the database; and the spec's Comment/Invitation/AuditLog entities, task assignment, user-management endpoints and pagination remain unbuilt.
+
 ## Evaluation Matrix
 
 | Deliverable | Validation | Success Metric |

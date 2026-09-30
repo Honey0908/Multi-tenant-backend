@@ -16,25 +16,35 @@ export async function signup(input: SignupInput) {
   const orgId = randomUUID();
 
   return withOrgContext(orgId, async (tx) => {
-    const existingOrg = await tx.organisation.findUnique({ where: { slug: input.organisationSlug } });
-    if (existingOrg) {
-      throw new ConflictError(`Organisation slug "${input.organisationSlug}" is already taken`);
-    }
-
     const defaultPlan = await tx.subscriptionPlan.findUnique({ where: { name: DEFAULT_PLAN_NAME } });
     if (!defaultPlan) {
       throw new Error(`Default plan "${DEFAULT_PLAN_NAME}" is not seeded — run \`npm run db:seed\``);
     }
 
-    const organisation = await tx.organisation.create({
-      data: {
-        id: orgId,
-        name: input.organisationName,
-        slug: input.organisationSlug,
-        plan_id: defaultPlan.id,
-      },
-      include: { plan: true },
-    });
+    // The slug collision is detected from the unique index rather than a
+    // prior findUnique. Two reasons: RLS on "Organisation" now hides other
+    // tenants' rows, so a pre-check could not see the row it was looking
+    // for anyway; and the index is race-free where a check-then-create is
+    // not — two simultaneous signups claiming one slug used to both pass
+    // the check. `slug` is the only unique constraint on Organisation, so a
+    // P2002 here can mean nothing else.
+    let organisation;
+    try {
+      organisation = await tx.organisation.create({
+        data: {
+          id: orgId,
+          name: input.organisationName,
+          slug: input.organisationSlug,
+          plan_id: defaultPlan.id,
+        },
+        include: { plan: true },
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictError(`Organisation slug "${input.organisationSlug}" is already taken`);
+      }
+      throw error;
+    }
 
     const passwordHash = await argon2.hash(input.password);
 
@@ -51,6 +61,7 @@ export async function signup(input: SignupInput) {
         },
       });
     } catch (error) {
+      // `email` is the only unique constraint on User.
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
         throw new ConflictError(`Email "${input.email}" is already registered`);
       }
