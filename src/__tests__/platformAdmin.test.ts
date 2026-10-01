@@ -38,6 +38,45 @@ describe('platform admin routes', () => {
     expect(listUsers.body.items[0].password_hash).toBeUndefined();
   });
 
+  it('rejects an unauthenticated request to list organisations', async () => {
+    const res = await request(app).get('/api/organisations');
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects an authenticated ORG_ADMIN (wrong role) listing organisations', async () => {
+    const org = await signupOrg('platform-list-forbidden');
+    const res = await request(app)
+      .get('/api/organisations')
+      .set({ Authorization: `Bearer ${org.token}` });
+    expect(res.status).toBe(403);
+  });
+
+  it('lets a PLATFORM_ADMIN page through every organisation with plan and aggregate usage', async () => {
+    const target = await signupOrg('platform-list-target');
+    const admin = await signupOrg('platform-list-admin');
+    const adminAuth = { Authorization: `Bearer ${await promoteToPlatformAdmin(admin)}` };
+
+    // The dev DB this suite runs against is long-lived (not reset per test
+    // run), so the target org is not guaranteed to land on page 1 — page
+    // through with the max page size until it turns up or pages run out.
+    let found: { id: string; plan?: { name?: string }; usage?: { users?: unknown } } | undefined;
+    let page = 1;
+    for (;;) {
+      const res = await request(app)
+        .get('/api/organisations')
+        .query({ page, limit: 100 })
+        .set(adminAuth);
+      expect(res.status).toBe(200);
+      found = res.body.items.find((item: { id: string }) => item.id === target.organisationId);
+      if (found || page >= res.body.pagination.totalPages) break;
+      page += 1;
+    }
+
+    expect(found).toBeDefined();
+    expect(found!.plan?.name).toBe('Starter');
+    expect(found!.usage?.users).toEqual({ used: 1, limit: expect.any(Number), remaining: expect.any(Number) });
+  });
+
   it('lets a PLATFORM_ADMIN provision a bare organisation', async () => {
     const admin = await signupOrg('platform-admin-provision');
     const adminAuth = { Authorization: `Bearer ${await promoteToPlatformAdmin(admin)}` };

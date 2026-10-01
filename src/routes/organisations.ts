@@ -3,7 +3,8 @@ import { z } from 'zod';
 import { requireAuth } from '../middleware/tenantContext.js';
 import { requireRole } from '../middleware/requireRole.js';
 import { createOrganisationSchema } from '../validators/organisation.js';
-import { createOrganisation, getOrganisationById } from '../services/organisationService.js';
+import { createOrganisation, getOrganisationById, listOrganisations } from '../services/organisationService.js';
+import { paginationQuerySchema } from '../lib/pagination.js';
 import { NotFoundError } from '../lib/errors.js';
 import { logger } from '../lib/logger.js';
 
@@ -11,6 +12,15 @@ import { logger } from '../lib/logger.js';
 // as opposed to the self-service /api/auth/signup flow every tenant uses.
 export const organisationsRouter = Router();
 organisationsRouter.use(requireAuth, requireRole('PLATFORM_ADMIN'));
+
+organisationsRouter.get('/', async (req, res, next) => {
+  try {
+    const pagination = paginationQuerySchema.parse(req.query);
+    res.json(await listOrganisations(pagination));
+  } catch (error) {
+    next(error);
+  }
+});
 
 organisationsRouter.post('/', async (req, res, next) => {
   try {

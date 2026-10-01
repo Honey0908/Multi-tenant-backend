@@ -213,6 +213,20 @@ Verified end-to-end: full suite **48 passing**, migrations replay cleanly onto a
 
 Still outstanding from the audit (not addressed here): `User.email` is globally rather than per-org unique; `requireAuth` does not revalidate user state against the database; and the spec's Comment/Invitation/AuditLog entities, task assignment, user-management endpoints and pagination remain unbuilt.
 
+---
+
+## Post-Milestone Audit — Platform Admin Organisation List
+
+Flagged as blocking: the platform-admin surface exposed `POST /organisations` and `GET /organisations/:id` (fetch one by id) and `GET /organisations/:orgId/users`, but no way to list organisations at all — the planned "organisation list: name, plan, aggregate usage, status" screen had nothing to page through.
+
+- [x] `GET /api/organisations` — every organisation on the platform, paginated (`page`/`limit`, same envelope as every other list endpoint), each row carrying its plan and aggregate usage (`src/services/organisationService.ts#listOrganisations`, `src/routes/organisations.ts`)
+
+Usage required reopening a deliberate decision from the Milestone 3/4 audit: `platform_reader` was explicitly denied any grant on `UsageCounter` ("operational/billing data, not org-level metadata" — see `add_usage_counters` migration). That boundary held for the org-detail and user-listing routes, which never needed usage figures; the list screen does. Fixed narrowly rather than widening `platform_reader` generally: the `allow_platform_usage_read` migration grants it `SELECT` only on `UsageCounter`, via the same `FOR SELECT TO platform_reader USING (true)` shape as `Organisation`'s existing `platform_read_policy` — still no grants on `Project`, `Issue`, or `Attachment`.
+
+`listOrganisations` fetches usage for the whole page in one extra query (`organisation_id IN (...)`), not one query per org, so a page of 20 costs 2 queries total rather than 21. The per-resource `{used, limit, remaining}` shape is unchanged from `getOwnUsage` — both now share a `buildUsage()` helper rather than duplicating the mapping.
+
+`docs/openapi.yaml` gained the `listOrganisations` operation and an `OrganisationSummary` schema; `scripts/specDrift.ts`'s operation count and the hardcoded op-count assertion in `src/__tests__/sessionAndUsage.test.ts` were updated to match (29 → 30). Tests: `src/__tests__/platformAdmin.test.ts` — unauthenticated/wrong-role rejection, and a `PLATFORM_ADMIN` paging through to find a known org with its plan and usage populated.
+
 ## Evaluation Matrix
 
 | Deliverable | Validation | Success Metric |

@@ -270,6 +270,36 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
 
   /organisations:
+    get:
+      operationId: listOrganisations
+      tags: [Platform Admin]
+      summary: List every organisation on the platform
+      description: >
+        The data behind the organisation-list screen: name, plan, aggregate
+        usage, and status, paginated. Served over the read-only
+        `platform_reader` connection with no app.org_id set — the same
+        platform_read_policy that lets it read every org's metadata now also
+        covers UsageCounter (see the allow_platform_usage_read migration),
+        so usage is read in one extra query for the whole page rather than
+        one query per org.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Organisations with plan and aggregate usage
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginationEnvelope'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/OrganisationSummary' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
     post:
       operationId: createOrganisation
       tags: [Platform Admin]
@@ -311,8 +341,9 @@ paths:
       summary: List one organisation's members
       description: >
         Served over a read-only DB connection (the `platform_reader` role)
-        with SELECT grants limited to Organisation/SubscriptionPlan/User —
-        it cannot see Project, Issue, or UsageCounter rows even if asked to.
+        with SELECT grants limited to Organisation/SubscriptionPlan/User/
+        UsageCounter — it cannot see Project, Issue, or Attachment rows even
+        if asked to.
       parameters:
         - $ref: '#/components/parameters/OrganisationIdPath'
         - $ref: '#/components/parameters/Page'
@@ -861,6 +892,33 @@ components:
         plan_id: { type: string, format: uuid }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+
+    OrganisationSummary:
+      type: object
+      description: One row of the platform-admin organisation list — metadata, plan, and aggregate usage, no member-level detail.
+      required: [id, name, slug, status, createdAt, plan, usage]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        slug: { type: string }
+        status: { type: string, enum: [ACTIVE, SUSPENDED] }
+        createdAt: { type: string, format: date-time }
+        plan:
+          type: object
+          properties:
+            name: { type: string, example: Starter }
+            maxUsers: { type: integer }
+            maxProjects: { type: integer }
+            maxTasks: { type: integer }
+            maxStorageMb: { type: integer }
+        usage:
+          type: object
+          description: Keyed by resource. storageBytes is counted in bytes, not MB.
+          properties:
+            users: { $ref: '#/components/schemas/UsageQuota' }
+            projects: { $ref: '#/components/schemas/UsageQuota' }
+            tasks: { $ref: '#/components/schemas/UsageQuota' }
+            storageBytes: { $ref: '#/components/schemas/UsageQuota' }
 
     User:
       type: object

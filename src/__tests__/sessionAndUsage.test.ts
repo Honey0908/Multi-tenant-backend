@@ -177,7 +177,7 @@ describe('OpenAPI document endpoint', () => {
   it('exposes every operation with an operationId', async () => {
     const res = await request(app).get('/openapi.json');
     const ops = Object.values(res.body.paths).flatMap((item) => Object.values(item as object));
-    expect(ops.length).toBe(29);
+    expect(ops.length).toBe(30);
     expect(ops.every((op: { operationId?: string }) => Boolean(op.operationId))).toBe(true);
   });
 });

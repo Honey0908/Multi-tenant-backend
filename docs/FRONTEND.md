@@ -297,6 +297,7 @@ Deleting a project also deletes its issues and attachments, and releases all the
 ### Platform admin (`PLATFORM_ADMIN` only)
 | Method | Path |
 |---|---|
+| GET | `/organisations` (paginated — name, plan, aggregate usage, status) |
 | POST | `/organisations` |
 | GET | `/organisations/{id}` |
 | GET | `/organisations/{orgId}/users` (paginated) |
@@ -330,7 +331,7 @@ Gate UI on `user.role` from `/auth/me`, and let the server be the real authority
 | Project detail | `GET /projects/{id}`, `GET /projects/{id}/issues` |
 | Task board | `GET …/issues`, `PATCH …/issues/{id}` to move columns |
 | Task detail | `GET …/issues/{id}`, attachments endpoints |
-| Platform admin | `GET /organisations/{id}`, `GET /organisations/{orgId}/users` |
+| Platform admin | `GET /organisations` (list), `GET /organisations/{id}`, `GET /organisations/{orgId}/users` |
 
 Plan limits are worth surfacing well — they are the most interesting behaviour in this backend. Read `/organisation/usage` to disable a "New project" button at the limit, and still handle the `409`, since another admin may take the last slot first.
 
@@ -344,7 +345,6 @@ Plan around these — they are specified but not built. Don't design screens tha
 - **Invitations** — `POST /users` creates an account with a password directly; there is no invite/accept flow, so an "Accept invitation" screen has nothing to call.
 - **Task assignment** — issues have no `assigneeId`, `reporterId`, or `dueDate`. No assignee picker is possible yet.
 - **Project `key`** (the `WEB-123` style identifier) and `createdBy`.
-- **Platform admin org list** — you can fetch one org by id, but not enumerate them, so that screen needs a known id for now.
 - **Audit log** — events are written to structured server logs only; nothing is queryable.
 - **Changing an org's plan** — limits are fixed at signup.
 
