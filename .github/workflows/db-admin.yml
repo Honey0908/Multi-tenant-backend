@@ -8,13 +8,14 @@ on:
   workflow_dispatch:
     inputs:
       command:
-        description: 'migrate (apply pending migrations) / resolve-applied (clear a stuck failed migration) / rotate-passwords'
+        description: 'migrate / resolve-applied (clear a stuck failed migration) / create-missing-roles / rotate-passwords'
         required: true
         default: migrate
         type: choice
         options:
           - migrate
           - resolve-applied
+          - create-missing-roles
           - rotate-passwords
       migration_name:
         description: 'Only for resolve-applied: the migration folder name, e.g. 20260919110410_create_app_role'
@@ -42,6 +43,12 @@ jobs:
       - name: Mark a stuck migration as applied
         if: inputs.command == 'resolve-applied'
         run: npx prisma migrate resolve --applied "${{ inputs.migration_name }}"
+        env:
+          DATABASE_URL: ${{ secrets.RENDER_DATABASE_URL }}
+
+      - name: Create app_user / auth_reader / platform_reader roles if missing
+        if: inputs.command == 'create-missing-roles'
+        run: node scripts/createMissingRoles.js
         env:
           DATABASE_URL: ${{ secrets.RENDER_DATABASE_URL }}
 
