@@ -34,11 +34,16 @@ await client.query(`
   $$;
 `);
 
+// NOT BYPASSRLS here, unlike the original create_auth_reader_role migration:
+// granting BYPASSRLS requires the granting role to itself have BYPASSRLS
+// (Postgres 16+), which Render's admin connection deliberately doesn't have.
+// auth_reader instead gets equivalent access via an explicit RLS policy —
+// see the auth_reader_explicit_select_policy migration.
 await client.query(`
   DO $$
   BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'auth_reader') THEN
-      CREATE ROLE auth_reader LOGIN PASSWORD 'auth_reader' NOSUPERUSER BYPASSRLS NOCREATEDB NOCREATEROLE;
+      CREATE ROLE auth_reader LOGIN PASSWORD 'auth_reader' NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
     END IF;
   END
   $$;
