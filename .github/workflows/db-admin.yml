@@ -1,0 +1,55 @@
+name: DB Admin (manual)
+
+# Manually-triggered, one-off database tasks against the hosted Postgres
+# instance — a workaround for networks that block/drop outbound port 5432,
+# which makes `npx prisma migrate deploy` and `psql` unreliable from a local
+# machine. GitHub-hosted runners aren't behind that restriction.
+on:
+  workflow_dispatch:
+    inputs:
+      command:
+        description: 'migrate (apply pending migrations) / resolve-applied (clear a stuck failed migration) / rotate-passwords'
+        required: true
+        default: migrate
+        type: choice
+        options:
+          - migrate
+          - resolve-applied
+          - rotate-passwords
+      migration_name:
+        description: 'Only for resolve-applied: the migration folder name, e.g. 20260919110410_create_app_role'
+        required: false
+        default: ''
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - run: npm ci
+
+      - name: Apply pending migrations
+        if: inputs.command == 'migrate'
+        run: npx prisma migrate deploy
+        env:
+          DATABASE_URL: ${{ secrets.RENDER_DATABASE_URL }}
+
+      - name: Mark a stuck migration as applied
+        if: inputs.command == 'resolve-applied'
+        run: npx prisma migrate resolve --applied "${{ inputs.migration_name }}"
+        env:
+          DATABASE_URL: ${{ secrets.RENDER_DATABASE_URL }}
+
+      - name: Rotate app_user / auth_reader / platform_reader passwords
+        if: inputs.command == 'rotate-passwords'
+        run: node scripts/rotateRolePasswords.js
+        env:
+          DATABASE_URL: ${{ secrets.RENDER_DATABASE_URL }}
+          APP_USER_PASSWORD: ${{ secrets.APP_USER_PASSWORD }}
+          AUTH_READER_PASSWORD: ${{ secrets.AUTH_READER_PASSWORD }}
+          PLATFORM_READER_PASSWORD: ${{ secrets.PLATFORM_READER_PASSWORD }}
