@@ -69,5 +69,7 @@ jobs:
         run: npm run db:seed
         env:
           DATABASE_URL: ${{ secrets.RENDER_DATABASE_URL }}
+          APP_DATABASE_URL: ${{ secrets.APP_DATABASE_URL_EXTERNAL }}
+          PLATFORM_DATABASE_URL: ${{ secrets.PLATFORM_DATABASE_URL_EXTERNAL }}
           PLATFORM_ADMIN_EMAIL: ${{ secrets.PLATFORM_ADMIN_EMAIL }}
           PLATFORM_ADMIN_PASSWORD: ${{ secrets.PLATFORM_ADMIN_PASSWORD }}
