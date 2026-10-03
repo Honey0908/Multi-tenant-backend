@@ -35,6 +35,8 @@ jobs:
 
       - run: npm ci
 
+      - run: npx prisma generate
+
       - name: Apply pending migrations
         if: inputs.command == 'migrate'
         run: npx prisma migrate deploy
