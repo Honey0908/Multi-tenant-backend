@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       command:
-        description: 'migrate / resolve-applied (clear a stuck failed migration) / create-missing-roles / rotate-passwords'
+        description: 'migrate / resolve-applied (clear a stuck failed migration) / create-missing-roles / rotate-passwords / seed'
         required: true
         default: migrate
         type: choice
@@ -17,6 +17,7 @@ on:
           - resolve-applied
           - create-missing-roles
           - rotate-passwords
+          - seed
       migration_name:
         description: 'Only for resolve-applied: the migration folder name, e.g. 20260919110410_create_app_role'
         required: false
@@ -60,3 +61,11 @@ jobs:
           APP_USER_PASSWORD: ${{ secrets.APP_USER_PASSWORD }}
           AUTH_READER_PASSWORD: ${{ secrets.AUTH_READER_PASSWORD }}
           PLATFORM_READER_PASSWORD: ${{ secrets.PLATFORM_READER_PASSWORD }}
+
+      - name: Seed the platform admin user
+        if: inputs.command == 'seed'
+        run: npm run db:seed
+        env:
+          DATABASE_URL: ${{ secrets.RENDER_DATABASE_URL }}
+          PLATFORM_ADMIN_EMAIL: ${{ secrets.PLATFORM_ADMIN_EMAIL }}
+          PLATFORM_ADMIN_PASSWORD: ${{ secrets.PLATFORM_ADMIN_PASSWORD }}
