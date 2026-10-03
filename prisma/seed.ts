@@ -4,6 +4,7 @@ import argon2 from 'argon2';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../src/generated/prisma/client.js';
 import { initUsageCounters } from '../src/lib/usageCounters.js';
+import { pgSslConfig } from '../src/lib/pgSsl.js';
 
 // Seeding is an operational task, like `prisma migrate`, so it connects as
 // the migration role (DATABASE_URL) rather than the app's `app_user` —
@@ -13,7 +14,10 @@ import { initUsageCounters } from '../src/lib/usageCounters.js';
 // very rows the idempotency checks below look for (both per the
 // add_organisation_rls migration). Superusers bypass RLS unconditionally,
 // so no app.org_id needs setting here.
-const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
+const adapter = new PrismaPg({
+  connectionString: process.env.DATABASE_URL,
+  ssl: pgSslConfig(process.env.DATABASE_URL),
+});
 const prisma = new PrismaClient({ adapter });
 
 const PLATFORM_ADMIN_EMAIL = process.env.PLATFORM_ADMIN_EMAIL ?? 'platform-admin@taskflow.local';
