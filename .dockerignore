@@ -6,5 +6,4 @@ src/generated
 .archify
 .agents
 .claude
-docs
 *.md
