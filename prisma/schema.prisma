@@ -82,11 +82,12 @@ model Organisation {
   created_at DateTime           @default(now())
   updated_at DateTime           @updatedAt
 
-  users          User[]
-  projects       Project[]
-  issues         Issue[]
-  usage_counters UsageCounter[]
-  attachments    Attachment[]
+  users           User[]
+  projects        Project[]
+  issues          Issue[]
+  usage_counters  UsageCounter[]
+  attachments     Attachment[]
+  project_members ProjectMember[]
 }
 
 model User {
@@ -102,6 +103,9 @@ model User {
   created_at      DateTime     @default(now())
   updated_at      DateTime     @updatedAt
 
+  assigned_issues     Issue[]
+  project_memberships ProjectMember[]
+
   @@unique([organisation_id, id])
   @@index([organisation_id])
 }
@@ -116,10 +120,31 @@ model Project {
   created_at      DateTime      @default(now())
   updated_at      DateTime      @updatedAt
 
-  issues Issue[]
+  issues  Issue[]
+  members ProjectMember[]
 
   @@unique([organisation_id, id])
   @@index([organisation_id])
+}
+
+/// Which users may see and work in a project. Tenant isolation (RLS) keeps
+/// orgs apart; this table separates users *within* an org: an ORG_MEMBER
+/// only sees projects they have a row here for (ORG_ADMINs see them all).
+/// Both composite FKs lead with organisation_id, so a membership can never
+/// join a project to a user from another tenant — Postgres rejects the row.
+model ProjectMember {
+  id              String       @id @default(uuid()) @db.Uuid
+  organisation_id String       @db.Uuid
+  organisation    Organisation @relation(fields: [organisation_id], references: [id], onDelete: Cascade)
+  project_id      String       @db.Uuid
+  project         Project      @relation(fields: [organisation_id, project_id], references: [organisation_id, id], onDelete: Cascade)
+  user_id         String       @db.Uuid
+  user            User         @relation(fields: [organisation_id, user_id], references: [organisation_id, id], onDelete: Cascade)
+  created_at      DateTime     @default(now())
+
+  @@unique([project_id, user_id])
+  @@unique([organisation_id, id])
+  @@index([organisation_id, user_id])
 }
 
 model Issue {
@@ -132,6 +157,13 @@ model Issue {
   description     String?
   status          IssueStatus   @default(TODO)
   priority        IssuePriority @default(MEDIUM)
+  /// Nullable: an unassigned issue. The composite FK keeps an assignee in
+  /// the same org as the issue. No ON DELETE SET NULL — Postgres would null
+  /// organisation_id too (it is part of the same FK), and Prisma cannot
+  /// express the column-list form — so every path that removes or
+  /// deactivates a user clears their assignments explicitly first.
+  assignee_id     String?       @db.Uuid
+  assignee        User?         @relation(fields: [organisation_id, assignee_id], references: [organisation_id, id], onDelete: NoAction)
   created_at      DateTime      @default(now())
   updated_at      DateTime      @updatedAt
 
@@ -139,6 +171,7 @@ model Issue {
 
   @@unique([organisation_id, id])
   @@index([organisation_id, project_id])
+  @@index([organisation_id, assignee_id])
 }
 
 /// Per-tenant, per-resource quota tracker. Enforces plan limits atomically at

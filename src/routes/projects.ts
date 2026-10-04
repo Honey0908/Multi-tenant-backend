@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/tenantContext.js';
+import { requireRole } from '../middleware/requireRole.js';
 import { createProjectSchema, updateProjectSchema } from '../validators/project.js';
 import { paginationQuerySchema } from '../lib/pagination.js';
 import { createProject, listProjects, getProject, updateProject, deleteProject } from '../services/projectService.js';
@@ -9,7 +10,11 @@ import { logger } from '../lib/logger.js';
 export const projectsRouter = Router();
 projectsRouter.use(requireAuth);
 
-projectsRouter.post('/', async (req, res, next) => {
+// Creating, editing and deleting projects is an admin action; members can
+// only read the projects they've been added to (see lib/projectAccess.ts).
+const requireOrgAdmin = requireRole('ORG_ADMIN', 'PLATFORM_ADMIN');
+
+projectsRouter.post('/', requireOrgAdmin, async (req, res, next) => {
   try {
     const input = createProjectSchema.parse(req.body);
     const project = await createProject(input);
@@ -38,7 +43,7 @@ projectsRouter.get('/:id', async (req, res, next) => {
   }
 });
 
-projectsRouter.patch('/:id', async (req, res, next) => {
+projectsRouter.patch('/:id', requireOrgAdmin, async (req, res, next) => {
   try {
     const id = z.string().uuid().parse(req.params.id);
     const input = updateProjectSchema.parse(req.body);
@@ -48,7 +53,7 @@ projectsRouter.patch('/:id', async (req, res, next) => {
   }
 });
 
-projectsRouter.delete('/:id', async (req, res, next) => {
+projectsRouter.delete('/:id', requireOrgAdmin, async (req, res, next) => {
   try {
     const id = z.string().uuid().parse(req.params.id);
     await deleteProject(id);

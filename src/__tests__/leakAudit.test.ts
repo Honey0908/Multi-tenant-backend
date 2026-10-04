@@ -59,4 +59,43 @@ describe('cross-tenant leak audit', () => {
       await client.end();
     }
   });
+
+  it('finds no cross-tenant memberships or assignees, and no assignee outside their project', async () => {
+    const org = await signupOrg('leak-audit-membership');
+    const auth = { Authorization: `Bearer ${org.token}` };
+    const project = await request(app).post('/api/projects').set(auth).send({ name: 'Leak Audit Project' });
+    await request(app)
+      .post(`/api/projects/${project.body.id}/members`)
+      .set(auth)
+      .send({ userId: org.userId });
+    await request(app)
+      .post(`/api/projects/${project.body.id}/issues`)
+      .set(auth)
+      .send({ title: 'Assigned', assignee_id: org.userId });
+
+    const client = new Client({ connectionString: process.env.DATABASE_URL });
+    await client.connect();
+    try {
+      const { rows } = await client.query(`
+        SELECT pm.id FROM "ProjectMember" pm
+        JOIN "Project" p ON pm.project_id = p.id
+        JOIN "User" u ON pm.user_id = u.id
+        WHERE pm.organisation_id != p.organisation_id OR pm.organisation_id != u.organisation_id
+        UNION ALL
+        SELECT i.id FROM "Issue" i
+        JOIN "User" u ON i.assignee_id = u.id
+        WHERE i.organisation_id != u.organisation_id
+        UNION ALL
+        SELECT i.id FROM "Issue" i
+        WHERE i.assignee_id IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM "ProjectMember" pm
+            WHERE pm.project_id = i.project_id AND pm.user_id = i.assignee_id
+          );
+      `);
+      expect(rows).toHaveLength(0);
+    } finally {
+      await client.end();
+    }
+  });
 });

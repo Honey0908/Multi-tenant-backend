@@ -234,31 +234,51 @@ Usage required reopening a deliberate decision from the Milestone 3/4 audit: `pl
 Today every `ORG_MEMBER` can see, edit and delete every project and issue in their organisation: tenant isolation (RLS on `organisation_id`) is the only boundary, and nothing separates users *within* an org. `Issue` has no assignee, there is no project-membership model, and `projects.ts`/`issues.ts` use `requireAuth` only (never `requireRole`). This milestone adds per-project access control on top of tenant isolation.
 
 ### Schema
-- [ ] `ProjectMember` model: `organisation_id`, `project_id`, `user_id`, `created_at`; `@@unique([project_id, user_id])`; composite FKs `(organisation_id, project_id)` → `Project` and `(organisation_id, user_id)` → `User`, so a membership can never link across tenants
-- [ ] `Issue.assignee_id` (nullable `Uuid`) with composite FK `(organisation_id, assignee_id)` → `User`, `onDelete: SetNull` semantics handled explicitly, plus `@@index([organisation_id, assignee_id])`
-- [ ] Migration enabling RLS on `ProjectMember` (same `organisation_id = app.org_id` policy and `app_user` grants as the other tenant tables); backfill is not needed — existing projects start with no members, so `ORG_ADMIN` must add them (documented in the migration)
+- [x] `ProjectMember` model: `organisation_id`, `project_id`, `user_id`, `created_at`; `@@unique([project_id, user_id])`; composite FKs `(organisation_id, project_id)` → `Project` and `(organisation_id, user_id)` → `User`, so a membership can never link across tenants
+- [x] `Issue.assignee_id` (nullable `Uuid`) with composite FK `(organisation_id, assignee_id)` → `User`, `onDelete: SetNull` semantics handled explicitly, plus `@@index([organisation_id, assignee_id])`
+- [x] Migration enabling RLS on `ProjectMember` (same `organisation_id = app.org_id` policy and `app_user` grants as the other tenant tables); backfill is not needed — existing projects start with no members, so `ORG_ADMIN` must add them (documented in the migration)
 
 ### Project Members
-- [ ] `POST /api/projects/:projectId/members` — add an org user to a project (`ORG_ADMIN` only; `404` if the user is in another org, `409` if already a member)
-- [ ] `GET /api/projects/:projectId/members` — list members (paginated, same envelope as other lists)
-- [ ] `DELETE /api/projects/:projectId/members/:userId` — remove a member (`ORG_ADMIN` only); unassigns that user's issues in the project in the same transaction
+- [x] `POST /api/projects/:projectId/members` — add an org user to a project (`ORG_ADMIN` only; `404` if the user is in another org, `409` if already a member)
+- [x] `GET /api/projects/:projectId/members` — list members (paginated, same envelope as other lists)
+- [x] `DELETE /api/projects/:projectId/members/:userId` — remove a member (`ORG_ADMIN` only); unassigns that user's issues in the project in the same transaction
 
 ### Task Assignment
-- [ ] `assignee_id` accepted (nullable) on `createIssueSchema`/`updateIssueSchema`, or a dedicated `PUT /api/projects/:projectId/issues/:id/assignee` — the service rejects an assignee who is not a member of that project (`422`)
-- [ ] Deactivating a user (`UserStatus.INACTIVE`) or removing them from a project clears their assignments on it
+- [x] `assignee_id` accepted (nullable) on `createIssueSchema`/`updateIssueSchema`, or a dedicated `PUT /api/projects/:projectId/issues/:id/assignee` — the service rejects an assignee who is not a member of that project (`422`)
+- [x] Deactivating a user (`UserStatus.INACTIVE`) or removing them from a project clears their assignments on it
 
 ### Role-Scoped Visibility
-- [ ] `listProjects` / `getProject`: `ORG_ADMIN` sees every project in the org; `ORG_MEMBER` sees only projects they belong to (non-members get `404`, not `403`, so project existence isn't leaked)
-- [ ] `listIssues` / `getIssue` and the attachment routes (which resolve the issue through `issueService.getIssue`) inherit the same membership check
-- [ ] Lock down writes: `POST`/`PATCH`/`DELETE /api/projects` restricted to `ORG_ADMIN`; members may update the issues they can see (decision: any project issue vs. assigned-only — default to any project issue, assignee-only is a follow-up)
-- [ ] Decide enforcement layer: service-layer filter (default, simplest) vs. a second RLS policy keyed on an `app.user_id` session variable (defence in depth, but `withOrgContext`/`tenantDb` would need to set it)
+- [x] `listProjects` / `getProject`: `ORG_ADMIN` sees every project in the org; `ORG_MEMBER` sees only projects they belong to (non-members get `404`, not `403`, so project existence isn't leaked)
+- [x] `listIssues` / `getIssue` and the attachment routes (which resolve the issue through `issueService.getIssue`) inherit the same membership check
+- [x] Lock down writes: `POST`/`PATCH`/`DELETE /api/projects` restricted to `ORG_ADMIN`; members may update the issues they can see (decision: any project issue vs. assigned-only — default to any project issue, assignee-only is a follow-up)
+- [x] Decide enforcement layer: service-layer filter (default, simplest) vs. a second RLS policy keyed on an `app.user_id` session variable (defence in depth, but `withOrgContext`/`tenantDb` would need to set it)
 
 ### Tests & Docs
-- [ ] `src/__tests__/projectMembership.test.ts`: a member lists only their projects; a non-member gets `404` on get/patch/delete and on the project's issues and attachments; admin sees all; cross-tenant user cannot be added as a member or assignee; assigning a non-member is rejected; removing a member clears their assignments
-- [ ] Update `tenantIsolation.test.ts`/`issues.test.ts`/`projects.test.ts` where they assume members have access to every project
-- [ ] `npm run audit:leak` still passes with the new `ProjectMember` table covered
-- [ ] `docs/openapi.yaml`: new operations, `assignee_id` on `Issue`, `ProjectMember` schema; update the op-count in `scripts/specDrift.ts` and `sessionAndUsage.test.ts`
-- [ ] Update `docs/FRONTEND.md` for the new endpoints and the filtered project list
+- [x] `src/__tests__/projectMembership.test.ts`: a member lists only their projects; a non-member gets `404` on get/patch/delete and on the project's issues and attachments; admin sees all; cross-tenant user cannot be added as a member or assignee; assigning a non-member is rejected; removing a member clears their assignments
+- [x] Update `tenantIsolation.test.ts`/`issues.test.ts`/`projects.test.ts` where they assume members have access to every project
+- [x] `npm run audit:leak` still passes with the new `ProjectMember` table covered
+- [x] `docs/openapi.yaml`: new operations, `assignee_id` on `Issue`, `ProjectMember` schema; update the op-count in `scripts/specDrift.ts` and `sessionAndUsage.test.ts`
+- [x] Update `docs/FRONTEND.md` for the new endpoints and the filtered project list
+
+### Decisions & notes
+
+- **Enforcement layer: service-layer filter**, not a second RLS policy. `src/lib/projectAccess.ts` holds `visibleProjectsFilter()` (a Prisma `where` fragment: empty for admins, "has a membership row" for members) and `assertProjectAccess(tx, projectId)`. Every issue and attachment route runs through one of them (attachments via `issueService.getIssue`), so there is a single choke point. The cost of not using RLS: a future query that forgets the filter is *not* caught by the database the way a missing `app.org_id` is. An `app.user_id` policy is the defence-in-depth follow-up if that matters.
+- **Admin-only project writes return `403` to members whether or not they belong to the project**, because the role check runs before any lookup. That reveals nothing: every member gets the same answer for every project id. `404` is reserved for reads and issue-level routes, where a membership check actually decides.
+- **Issue writes: any member of the project may create/update/delete its issues** (the plan's default); assignee-only edits are a follow-up.
+- **`Issue.assignee` has no `ON DELETE SET NULL`.** Postgres would null `organisation_id` too (same composite FK), and Prisma can't express the column-list form, so it is `NO ACTION` and every path that removes or deactivates a user clears assignments first (`deleteUser`, `updateUser` → `INACTIVE`, `removeProjectMember`). Memberships cascade normally.
+- **Assignment races removal.** `assertAssignable` locks the membership and user rows `FOR SHARE`; `removeProjectMember` / `updateUser` write those rows *then* clear assignments, so an in-flight assignment either commits first (and is cleared) or fails its check. Covered by a race test and by a new leak-audit invariant: no issue may have an assignee who isn't a project member.
+- **Assignee/membership extras beyond the plan:** inactive users can't be added to a project or assigned (`422`); deactivating a user clears their assignments in *all* projects but keeps their memberships, so reactivating restores access.
+- **Demoting an admin to member** drops their project visibility to whatever memberships they hold. Intended, but worth knowing.
+- No changes were needed to `tenantIsolation`/`issues`/`projects` tests: they all act as the founding `ORG_ADMIN`, who still sees everything. Role-scoped behaviour lives in `src/__tests__/projectMembership.test.ts` (12 tests).
+- `scripts/specDrift.ts` has no hardcoded op count (the plan assumed one); only the assertion in `sessionAndUsage.test.ts` changed (30 → 33).
+
+### Found while verifying: plan catalog writes had been silently re-granted
+
+`make_role_grants_portable` (Milestone 4 era) ends with `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_user`, which silently undid the `REVOKE ... ON "SubscriptionPlan"` from `add_organisation_rls`. The Organisation-isolation test that checks for that revoke then *succeeded in its UPDATE*, leaving every plan in the dev DB at `max_projects = 9999` and breaking five unrelated limit tests. Fixed with the `revoke_plan_catalog_writes` migration; dev DB plan values restored from `prisma/seed.ts` (3 / 20 / 100). Orgs created while the values were 9999 keep a 9999 `UsageCounter.max_limit`.
+
+Note for running tests: `.env` currently points `S3_*` at a real Backblaze B2 bucket (and the endpoint lacks `https://`), so the attachment tests fail unless SeaweedFS values from `.env.example` are exported first.
+
+Verified: full suite **88 passing**, `npm run audit:leak` (6 checks) and `npm run audit:spec` (33 operations) clean.
 
 ---
 

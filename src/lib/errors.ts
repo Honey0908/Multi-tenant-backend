@@ -38,3 +38,9 @@ export class PayloadTooLargeError extends AppError {
     super(message, 413, 'PAYLOAD_TOO_LARGE');
   }
 }
+
+export class UnprocessableError extends AppError {
+  constructor(message: string) {
+    super(message, 422, 'UNPROCESSABLE');
+  }
+}
