@@ -268,13 +268,25 @@ All paths are relative to `http://localhost:3000/api`. All require a bearer toke
 `PATCH`/`DELETE` return `409` if the change would leave the org with no active admin, or if you target yourself with `DELETE`. `PLATFORM_ADMIN` is never assignable.
 
 ### Projects
-| Method | Path |
-|---|---|
-| GET | `/projects` (paginated) |
-| POST | `/projects` |
-| GET / PATCH / DELETE | `/projects/{id}` |
+| Method | Path | Role |
+|---|---|---|
+| GET | `/projects` (paginated) | any member — **filtered**, see below |
+| POST | `/projects` | `ORG_ADMIN` |
+| GET | `/projects/{id}` | any member of that project, or an admin |
+| PATCH / DELETE | `/projects/{id}` | `ORG_ADMIN` |
+
+**The project list is filtered by who is asking.** An `ORG_ADMIN` gets every project in the org; an `ORG_MEMBER` gets only the projects they've been added to (so a brand-new member sees an empty list until an admin adds them — design an empty state for that). A member who requests a project they're not in gets `404`, not `403`, exactly as if it didn't exist; the same goes for that project's issues, members and attachments. Members calling `POST`/`PATCH`/`DELETE` get `403`, so hide those controls for them.
 
 Deleting a project also deletes its issues and attachments, and releases all the quota they held.
+
+### Project members
+| Method | Path | Role |
+|---|---|---|
+| GET | `/projects/{projectId}/members` (paginated) | anyone who can see the project |
+| POST | `/projects/{projectId}/members` `{ userId }` | `ORG_ADMIN` |
+| DELETE | `/projects/{projectId}/members/{userId}` | `ORG_ADMIN` |
+
+`POST` returns `404` for a user who isn't in the org, `409` if they're already a member, and `422` if they're inactive. `DELETE` also unassigns that user's issues in the project. Each item carries a `user` object (`id`, `email`, `first_name`, `last_name`, `role`, `status`) so you can render the roster without a second call. Use `GET /users` for the "add member" picker.
 
 ### Issues (tasks)
 | Method | Path |
@@ -285,6 +297,7 @@ Deleting a project also deletes its issues and attachments, and releases all the
 
 `status`: `TODO` · `IN_PROGRESS` · `DONE` — enough for a Kanban board, moved with `PATCH`.
 `priority`: `LOW` · `MEDIUM` · `HIGH`.
+`assignee_id`: a user id or `null`, accepted on `POST` and `PATCH` and returned on every issue. The assignee must be an **active member of that project**, else `422` — populate the assignee picker from `GET /projects/{projectId}/members`, not `/users`. `PATCH` with `null` unassigns; omitting the field leaves it alone. Assignments clear automatically when the user is removed from the project, deactivated or deleted, so expect `assignee_id: null` to appear on issues you had cached as assigned.
 
 ### Attachments
 | Method | Path |
@@ -310,8 +323,8 @@ These run over a separate, read-only database connection with no access to any t
 
 | Role | Can |
 |---|---|
-| `ORG_MEMBER` | Read the org directory; full CRUD on projects and tasks. |
-| `ORG_ADMIN` | Everything above, plus managing members. |
+| `ORG_MEMBER` | Read the org directory; see only the projects they belong to; full CRUD on the tasks in those projects. Cannot create, edit or delete projects. |
+| `ORG_ADMIN` | See every project; create/edit/delete projects; manage project membership and org users. |
 | `PLATFORM_ADMIN` | Org metadata across tenants. **No** tenant content. |
 
 Gate UI on `user.role` from `/auth/me`, and let the server be the real authority — a hidden button is convenience, not security.
@@ -329,6 +342,7 @@ Gate UI on `user.role` from `/auth/me`, and let the server be the real authority
 | Users | `GET /users`, `POST /users`, `PATCH|DELETE /users/{id}` |
 | Project list | `GET /projects` (+ `POST`) |
 | Project detail | `GET /projects/{id}`, `GET /projects/{id}/issues` |
+| Project members | `GET|POST /projects/{projectId}/members`, `DELETE …/members/{userId}` |
 | Task board | `GET …/issues`, `PATCH …/issues/{id}` to move columns |
 | Task detail | `GET …/issues/{id}`, attachments endpoints |
 | Platform admin | `GET /organisations` (list), `GET /organisations/{id}`, `GET /organisations/{orgId}/users` |
@@ -343,7 +357,7 @@ Plan around these — they are specified but not built. Don't design screens tha
 
 - **Comments on tasks** — no entity, no endpoints.
 - **Invitations** — `POST /users` creates an account with a password directly; there is no invite/accept flow, so an "Accept invitation" screen has nothing to call.
-- **Task assignment** — issues have no `assigneeId`, `reporterId`, or `dueDate`. No assignee picker is possible yet.
+- **Reporter and due date** — issues have an `assignee_id` but no `reporterId` or `dueDate`.
 - **Project `key`** (the `WEB-123` style identifier) and `createdBy`.
 - **Audit log** — events are written to structured server logs only; nothing is queryable.
 - **Changing an org's plan** — limits are fixed at signup.

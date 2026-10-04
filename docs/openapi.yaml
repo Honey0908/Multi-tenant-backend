@@ -15,6 +15,14 @@ tags:
   - name: Users
     description: Managing members of the caller's own organisation.
   - name: Projects
+    description: >
+      Per-project access control sits on top of tenant isolation. ORG_ADMINs
+      see every project in their organisation and are the only role that can
+      create, edit or delete projects; an ORG_MEMBER sees only the projects
+      they've been added to, and gets 404 (never 403) for any other, so a
+      project's existence isn't leaked. See docs/plan.md Milestone 5.
+  - name: Project Members
+    description: Which users belong to a project. Managed by ORG_ADMINs; readable by anyone who can see the project.
   - name: Issues
   - name: Attachments
     description: >
@@ -370,6 +378,7 @@ paths:
       tags: [Projects]
       summary: Create a project in the caller's organisation
       description: >
+        ORG_ADMIN only.
         Enforces the plan's project limit atomically via UsageCounter — a
         single conditional UPDATE, not count-then-create, so two concurrent
         requests at the limit can never both succeed. Returns 409 when the
@@ -387,6 +396,7 @@ paths:
               schema: { $ref: '#/components/schemas/Project' }
         '400': { $ref: '#/components/responses/ValidationError' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '409':
           description: Project limit reached
           content:
@@ -395,7 +405,8 @@ paths:
     get:
       operationId: listProjects
       tags: [Projects]
-      summary: List the caller's organisation's projects
+      summary: List the projects the caller can see
+      description: ORG_ADMIN sees every project in the organisation; ORG_MEMBER sees only projects they belong to.
       parameters:
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/Limit'
@@ -433,6 +444,7 @@ paths:
       operationId: updateProject
       tags: [Projects]
       summary: Update a project
+      description: ORG_ADMIN only.
       parameters:
         - $ref: '#/components/parameters/ProjectId'
       requestBody:
@@ -448,17 +460,97 @@ paths:
               schema: { $ref: '#/components/schemas/Project' }
         '400': { $ref: '#/components/responses/ValidationError' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
     delete:
       operationId: deleteProject
       tags: [Projects]
       summary: Delete a project
-      description: Releases its claimed UsageCounter slot atomically in the same transaction as the delete.
+      description: ORG_ADMIN only. Releases its claimed UsageCounter slot atomically in the same transaction as the delete.
       parameters:
         - $ref: '#/components/parameters/ProjectId'
       responses:
         '204': { description: Deleted }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /projects/{projectId}/members:
+    post:
+      operationId: addProjectMember
+      tags: [Project Members]
+      summary: Add an organisation user to a project
+      description: >
+        ORG_ADMIN only. 404 if the user doesn't exist in the caller's
+        organisation (a user from another tenant is indistinguishable from a
+        nonexistent one), 409 if already a member, 422 if the user is inactive.
+      parameters:
+        - $ref: '#/components/parameters/ProjectIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AddProjectMemberRequest' }
+      responses:
+        '201':
+          description: Member added
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectMember' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: User is already a member of this project
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422':
+          description: User is inactive
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    get:
+      operationId: listProjectMembers
+      tags: [Project Members]
+      summary: List a project's members
+      description: Visible to anyone who can see the project; 404 otherwise.
+      parameters:
+        - $ref: '#/components/parameters/ProjectIdPath'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Members
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginationEnvelope'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/ProjectMember' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /projects/{projectId}/members/{userId}:
+    delete:
+      operationId: removeProjectMember
+      tags: [Project Members]
+      summary: Remove a user from a project
+      description: >
+        ORG_ADMIN only. Unassigns that user's issues in this project in the
+        same transaction.
+      parameters:
+        - $ref: '#/components/parameters/ProjectIdPath'
+        - $ref: '#/components/parameters/MemberUserId'
+      responses:
+        '204': { description: Removed }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
   /projects/{projectId}/issues:
@@ -483,6 +575,11 @@ paths:
         '400': { $ref: '#/components/responses/ValidationError' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: assignee_id is not an active member of this project
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '409':
           description: Task limit reached
           content:
@@ -549,6 +646,11 @@ paths:
         '400': { $ref: '#/components/responses/ValidationError' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: assignee_id is not an active member of this project
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
     delete:
       operationId: deleteIssue
       tags: [Issues]
@@ -730,6 +832,11 @@ components:
       schema: { type: string, format: uuid }
     ProjectIdPath:
       name: projectId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    MemberUserId:
+      name: userId
       in: path
       required: true
       schema: { type: string, format: uuid }
@@ -966,6 +1073,11 @@ components:
         description: { type: string, maxLength: 4000 }
         status: { type: string, enum: [TODO, IN_PROGRESS, DONE], default: TODO }
         priority: { type: string, enum: [LOW, MEDIUM, HIGH], default: MEDIUM }
+        assignee_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Must be an active member of the project, otherwise 422.
 
     UpdateIssueRequest:
       type: object
@@ -974,6 +1086,11 @@ components:
         description: { type: string, maxLength: 4000, nullable: true }
         status: { type: string, enum: [TODO, IN_PROGRESS, DONE] }
         priority: { type: string, enum: [LOW, MEDIUM, HIGH] }
+        assignee_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Must be an active member of the project, otherwise 422. null unassigns; omit to leave unchanged.
 
     Issue:
       type: object
@@ -985,8 +1102,32 @@ components:
         description: { type: string, nullable: true }
         status: { type: string, enum: [TODO, IN_PROGRESS, DONE] }
         priority: { type: string, enum: [LOW, MEDIUM, HIGH] }
+        assignee_id: { type: string, format: uuid, nullable: true }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+
+    AddProjectMemberRequest:
+      type: object
+      required: [userId]
+      properties:
+        userId: { type: string, format: uuid }
+
+    ProjectMember:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        user:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            email: { type: string, format: email }
+            first_name: { type: string }
+            last_name: { type: string }
+            role: { type: string, enum: [PLATFORM_ADMIN, ORG_ADMIN, ORG_MEMBER] }
+            status: { type: string, enum: [ACTIVE, INACTIVE] }
 
     ReserveAttachmentRequest:
       type: object

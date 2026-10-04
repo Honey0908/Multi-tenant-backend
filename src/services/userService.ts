@@ -153,6 +153,15 @@ export async function updateUser(id: string, input: UpdateUserInput) {
         ...(input.status !== undefined ? { status: input.status } : {}),
       },
     });
+
+    // An inactive user can't act on anything, so work assigned to them would
+    // sit stranded. Cleared after the update above: that UPDATE takes a row
+    // lock on the user which waits out any in-flight assignment (it holds
+    // FOR SHARE — see issueService.assertAssignable), so none can slip past.
+    // Memberships are kept, so reactivating restores their project access.
+    if (input.status === 'INACTIVE') {
+      await tx.issue.updateMany({ where: { assignee_id: id }, data: { assignee_id: null } });
+    }
     return omitPasswordHash(updated);
   });
 }
@@ -174,6 +183,10 @@ export async function deleteUser(id: string) {
       await assertNotLastAdmin(tx, orgId, id);
     }
 
+    // Issue.assignee has no ON DELETE SET NULL (see schema.prisma), so the
+    // assignments must go first or the delete fails on the foreign key.
+    // Project memberships cascade on their own.
+    await tx.issue.updateMany({ where: { assignee_id: id }, data: { assignee_id: null } });
     await tx.user.delete({ where: { id } });
     // Seats were claimed on creation but, until this endpoint existed,
     // could never be given back — an org permanently lost headroom for
