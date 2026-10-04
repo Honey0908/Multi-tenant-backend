@@ -227,6 +227,41 @@ Usage required reopening a deliberate decision from the Milestone 3/4 audit: `pl
 
 `docs/openapi.yaml` gained the `listOrganisations` operation and an `OrganisationSummary` schema; `scripts/specDrift.ts`'s operation count and the hardcoded op-count assertion in `src/__tests__/sessionAndUsage.test.ts` were updated to match (29 → 30). Tests: `src/__tests__/platformAdmin.test.ts` — unauthenticated/wrong-role rejection, and a `PLATFORM_ADMIN` paging through to find a known org with its plan and usage populated.
 
+## Milestone 5 — Project Membership & Task Assignment
+
+**Schema → Membership API → Task assignment → Role-scoped visibility**
+
+Today every `ORG_MEMBER` can see, edit and delete every project and issue in their organisation: tenant isolation (RLS on `organisation_id`) is the only boundary, and nothing separates users *within* an org. `Issue` has no assignee, there is no project-membership model, and `projects.ts`/`issues.ts` use `requireAuth` only (never `requireRole`). This milestone adds per-project access control on top of tenant isolation.
+
+### Schema
+- [ ] `ProjectMember` model: `organisation_id`, `project_id`, `user_id`, `created_at`; `@@unique([project_id, user_id])`; composite FKs `(organisation_id, project_id)` → `Project` and `(organisation_id, user_id)` → `User`, so a membership can never link across tenants
+- [ ] `Issue.assignee_id` (nullable `Uuid`) with composite FK `(organisation_id, assignee_id)` → `User`, `onDelete: SetNull` semantics handled explicitly, plus `@@index([organisation_id, assignee_id])`
+- [ ] Migration enabling RLS on `ProjectMember` (same `organisation_id = app.org_id` policy and `app_user` grants as the other tenant tables); backfill is not needed — existing projects start with no members, so `ORG_ADMIN` must add them (documented in the migration)
+
+### Project Members
+- [ ] `POST /api/projects/:projectId/members` — add an org user to a project (`ORG_ADMIN` only; `404` if the user is in another org, `409` if already a member)
+- [ ] `GET /api/projects/:projectId/members` — list members (paginated, same envelope as other lists)
+- [ ] `DELETE /api/projects/:projectId/members/:userId` — remove a member (`ORG_ADMIN` only); unassigns that user's issues in the project in the same transaction
+
+### Task Assignment
+- [ ] `assignee_id` accepted (nullable) on `createIssueSchema`/`updateIssueSchema`, or a dedicated `PUT /api/projects/:projectId/issues/:id/assignee` — the service rejects an assignee who is not a member of that project (`422`)
+- [ ] Deactivating a user (`UserStatus.INACTIVE`) or removing them from a project clears their assignments on it
+
+### Role-Scoped Visibility
+- [ ] `listProjects` / `getProject`: `ORG_ADMIN` sees every project in the org; `ORG_MEMBER` sees only projects they belong to (non-members get `404`, not `403`, so project existence isn't leaked)
+- [ ] `listIssues` / `getIssue` and the attachment routes (which resolve the issue through `issueService.getIssue`) inherit the same membership check
+- [ ] Lock down writes: `POST`/`PATCH`/`DELETE /api/projects` restricted to `ORG_ADMIN`; members may update the issues they can see (decision: any project issue vs. assigned-only — default to any project issue, assignee-only is a follow-up)
+- [ ] Decide enforcement layer: service-layer filter (default, simplest) vs. a second RLS policy keyed on an `app.user_id` session variable (defence in depth, but `withOrgContext`/`tenantDb` would need to set it)
+
+### Tests & Docs
+- [ ] `src/__tests__/projectMembership.test.ts`: a member lists only their projects; a non-member gets `404` on get/patch/delete and on the project's issues and attachments; admin sees all; cross-tenant user cannot be added as a member or assignee; assigning a non-member is rejected; removing a member clears their assignments
+- [ ] Update `tenantIsolation.test.ts`/`issues.test.ts`/`projects.test.ts` where they assume members have access to every project
+- [ ] `npm run audit:leak` still passes with the new `ProjectMember` table covered
+- [ ] `docs/openapi.yaml`: new operations, `assignee_id` on `Issue`, `ProjectMember` schema; update the op-count in `scripts/specDrift.ts` and `sessionAndUsage.test.ts`
+- [ ] Update `docs/FRONTEND.md` for the new endpoints and the filtered project list
+
+---
+
 ## Evaluation Matrix
 
 | Deliverable | Validation | Success Metric |
