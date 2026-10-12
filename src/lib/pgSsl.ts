@@ -1,4 +1,4 @@
-// Local dev Postgres (docker-compose) doesn't support SSL at all; managed
+  // Local dev Postgres (docker-compose) doesn't support SSL at all; managed
 // providers (Render, etc.) require it for every external connection. `pg`
 // doesn't infer this from the connection string on its own, so each
 // PrismaPg adapter needs it passed explicitly.

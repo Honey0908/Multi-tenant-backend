@@ -6,7 +6,10 @@ export const signupSchema = z.object({
     .string()
     .trim()
     .toLowerCase()
-    .regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, 'slug must be lowercase alphanumeric with hyphens'),
+    .regex(
+      /^[a-z0-9]+(-[a-z0-9]+)*$/,
+      'slug must be lowercase alphanumeric with hyphens',
+    ),
   email: z.string().trim().toLowerCase().email(),
   password: z.string().min(8).max(128),
   firstName: z.string().trim().min(1).max(80),

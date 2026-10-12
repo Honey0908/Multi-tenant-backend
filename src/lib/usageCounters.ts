@@ -37,7 +37,9 @@ export async function claimUsage(
   planName: string,
   amount: number | bigint = 1,
 ): Promise<void> {
-  const claimed = await tx.$queryRaw<Array<{ value: bigint; max_limit: bigint }>>`
+  const claimed = await tx.$queryRaw<
+    Array<{ value: bigint; max_limit: bigint }>
+  >`
     UPDATE "UsageCounter"
     SET value = value + ${amount}::bigint
     WHERE organisation_id = ${orgId}::uuid
@@ -51,7 +53,12 @@ export async function claimUsage(
   }
 
   const counter = await tx.usageCounter.findUniqueOrThrow({
-    where: { organisation_id_resource_type: { organisation_id: orgId, resource_type: resourceType } },
+    where: {
+      organisation_id_resource_type: {
+        organisation_id: orgId,
+        resource_type: resourceType,
+      },
+    },
   });
 
   const label = RESOURCE_LABELS[resourceType];
@@ -93,14 +100,34 @@ export async function releaseUsage(
 export async function initUsageCounters(
   tx: Prisma.TransactionClient,
   orgId: string,
-  plan: { max_projects: number; max_tasks: number; max_users: number; max_storage_mb: number },
+  plan: {
+    max_projects: number;
+    max_tasks: number;
+    max_users: number;
+    max_storage_mb: number;
+  },
   initialUsers = 0,
 ): Promise<void> {
   await tx.usageCounter.createMany({
     data: [
-      { organisation_id: orgId, resource_type: ResourceType.PROJECTS, value: 0, max_limit: plan.max_projects },
-      { organisation_id: orgId, resource_type: ResourceType.TASKS, value: 0, max_limit: plan.max_tasks },
-      { organisation_id: orgId, resource_type: ResourceType.USERS, value: initialUsers, max_limit: plan.max_users },
+      {
+        organisation_id: orgId,
+        resource_type: ResourceType.PROJECTS,
+        value: 0,
+        max_limit: plan.max_projects,
+      },
+      {
+        organisation_id: orgId,
+        resource_type: ResourceType.TASKS,
+        value: 0,
+        max_limit: plan.max_tasks,
+      },
+      {
+        organisation_id: orgId,
+        resource_type: ResourceType.USERS,
+        value: initialUsers,
+        max_limit: plan.max_users,
+      },
       {
         organisation_id: orgId,
         resource_type: ResourceType.STORAGE_BYTES,
