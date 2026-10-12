@@ -174,8 +174,7 @@ model Issue {
   @@index([organisation_id, assignee_id])
 }
 
-/// Per-tenant, per-resource quota tracker. Enforces plan limits atomically at
-/// the DB layer: a single conditional UPDATE (see src/lib/usageCounters.ts)
+/// Per-tenant, per-resource quota tracker. Enforces plan limits atomically
 /// increments `value` only if the result would stay within `max_limit`, so
 /// concurrent requests racing for the last slot are serialized by Postgres's
 /// row lock on that single row — exactly one wins, no count-then-create gap.
