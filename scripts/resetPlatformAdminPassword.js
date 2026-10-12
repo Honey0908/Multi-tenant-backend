@@ -18,7 +18,11 @@
 import argon2 from 'argon2';
 import { Client } from 'pg';
 
-const required = ['DATABASE_URL', 'PLATFORM_ADMIN_EMAIL', 'NEW_PLATFORM_ADMIN_PASSWORD'];
+const required = [
+  'DATABASE_URL',
+  'PLATFORM_ADMIN_EMAIL',
+  'PLATFORM_ADMIN_PASSWORD',
+];
 
 for (const name of required) {
   if (!process.env[name]) {
@@ -28,7 +32,7 @@ for (const name of required) {
 }
 
 const email = process.env.PLATFORM_ADMIN_EMAIL;
-const passwordHash = await argon2.hash(process.env.NEW_PLATFORM_ADMIN_PASSWORD);
+const passwordHash = await argon2.hash(process.env.PLATFORM_ADMIN_PASSWORD);
 
 const client = new Client({
   connectionString: process.env.DATABASE_URL,
